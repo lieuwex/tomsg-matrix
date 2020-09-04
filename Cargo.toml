@@ -1,0 +1,51 @@
+[package]
+name = "tomsg-matrix"
+version = "0.1.0"
+authors = ["Lieuwe Rooijakkers <lieuwerooijakkers@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+lto = true
+
+[dependencies]
+futures = "0.3.4"
+futures-util = "0.3.4"
+tokio = { version = "0.2.22", features = [ "full" ] }
+
+once_cell = "1.4.0"
+
+tomsg-rs = { git = "https://github.com/lieuwex/tomsg-rs" }
+
+ruma = "0.0.1"
+ruma-identifiers = { version = "0.17.4", features = [ "rand" ] }
+ruma-client = { git = "https://github.com/ruma/ruma-client" }
+ruma-appservice-api = "0.2.0-alpha.1"
+ruma-events = "0.22.0-alpha.1"
+ruma-client-api = "0.10.0-alpha.1"
+ruma-api = "0.17.0-alpha.1"
+
+matrix-appservice-rs = { git = "https://github.com/lieuwex/matrix-appservice-rs" }
+
+serde = "1.0.114"
+serde_json = "1.0.56"
+serde_yaml = "0.8.13"
+
+warp = "0.2"
+http = "0.2.1"
+
+url = "2.1.1"
+
+rusqlite = "0.23.1"
+
+rand = "0.7.3"
+
+shrinkwraprs = "0.3.0"
+
+html-escape = "0.2.6"
+
+regex = "0.1"
+
+hyper = "0.13"
+bytes = "0.5"
