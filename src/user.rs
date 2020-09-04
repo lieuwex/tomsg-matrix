@@ -1,9 +1,9 @@
 use crate::matrix::*;
 use crate::room::RoomUser;
 
-use ruma_api::Endpoint;
+use ruma::api::OutgoingRequest;
+use ruma::identifiers::{RoomId, UserId};
 use ruma_client::Error;
-use ruma_identifiers::{RoomId, UserId};
 
 use shrinkwraprs::Shrinkwrap;
 
@@ -32,11 +32,11 @@ pub enum User {
 }
 
 impl User {
-    pub async fn request<R: Endpoint + std::fmt::Debug>(
+    pub async fn request<R: OutgoingRequest + std::fmt::Debug>(
         &self,
         client: &MatrixClient,
         request: R,
-    ) -> Result<R::Response, Error<R::ResponseError>> {
+    ) -> Result<R::IncomingResponse, Error<R::EndpointError>> {
         let user_id = match self {
             User::Real { .. } => panic!(),
             User::Puppet { matrix_id, .. } => matrix_id,

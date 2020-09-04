@@ -21,15 +21,13 @@ use crate::{get_local_part, get_matrix_client, get_state, TOMSG_CONN_SHED};
 use matrix_appservice_rs::serve;
 use matrix_appservice_rs::{Mappable, MappingId};
 
+use ruma::events::room::member::MembershipState;
+use ruma::events::room::message::{MessageEventContent, RelatesTo};
+use ruma::events::{AnyEvent, AnyMessageEvent, AnyStateEvent};
+use ruma::identifiers::EventId;
+use ruma::identifiers::RoomId;
+use ruma::identifiers::UserId;
 use ruma::Raw;
-use ruma_events::room::member::MembershipState;
-use ruma_events::room::message::{MessageEventContent, RelatesTo};
-use ruma_events::{AnyEvent, AnyMessageEvent, AnyStateEvent};
-use ruma_identifiers::EventId;
-use ruma_identifiers::RoomId;
-use ruma_identifiers::UserId;
-
-use url::Url;
 
 async fn send_message_tomsg(
     ch: &mut Channel,
@@ -365,7 +363,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
                 Some(url) => url,
             };
 
-            let url = Url::parse(&url).unwrap();
+            let url: http::Uri = url.parse().unwrap();
 
             let line = mxc_to_url(get_matrix_client(), &url);
             let line = Line::try_from(line).unwrap();
@@ -443,7 +441,7 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
                     }
 
                     get_matrix_client()
-                        .puppet_join_room(&state_key, room_id.clone(), None)
+                        .puppet_join_room(&state_key, &room_id, None)
                         .await;
                     if e.content.is_direct.unwrap_or(false) {
                         info.state.set_management_room(sender_id, room_id);

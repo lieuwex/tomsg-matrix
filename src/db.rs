@@ -9,7 +9,7 @@ use std::iter::FromIterator;
 
 use rusqlite::{params, Connection, Result};
 
-use ruma_identifiers::{EventId, RoomId, UserId};
+use ruma::identifiers::{EventId, RoomId, UserId};
 
 use tomsg_rs::id::Id;
 use tomsg_rs::line::Line;

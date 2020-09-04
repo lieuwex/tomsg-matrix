@@ -1,6 +1,6 @@
 use crate::room::Room;
 
-use ruma_identifiers::{EventId, RoomId};
+use ruma::identifiers::{EventId, RoomId};
 
 use tomsg_rs::id::Id;
 use tomsg_rs::word::Word;

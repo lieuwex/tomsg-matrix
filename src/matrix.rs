@@ -12,29 +12,27 @@ use crate::user::*;
 use matrix_appservice_rs::RequestBuilder;
 use matrix_appservice_rs::{Mappable, MappingId};
 
+use ruma::api::client::r0::account::register;
+use ruma::api::client::r0::membership::invite_user;
+use ruma::api::client::r0::membership::join_room_by_id;
+use ruma::api::client::r0::membership::leave_room;
+use ruma::api::client::r0::message::send_message_event;
+use ruma::api::client::r0::profile::set_display_name;
+use ruma::api::client::r0::room::{create_room, get_room_event};
+use ruma::events::room::message::MessageEventContent;
+use ruma::events::{AnyMessageEventContent, AnyRoomEvent};
+use ruma::identifiers::{EventId, RoomId, ServerName, UserId};
 use ruma::Raw;
-use ruma_client::api::r0::message::create_message_event;
 use ruma_client::Error;
 use ruma_client::{Client, HttpsClient, Session};
-use ruma_client_api::r0::account::register;
-use ruma_client_api::r0::membership::invite_user;
-use ruma_client_api::r0::membership::join_room_by_id;
-use ruma_client_api::r0::membership::leave_room;
-use ruma_client_api::r0::profile::set_display_name;
-use ruma_client_api::r0::room::{create_room, get_room_event};
-use ruma_events::room::message::MessageEventContent;
-use ruma_events::{AnyRoomEvent, EventType};
-use ruma_identifiers::{EventId, RoomId, ServerName, UserId};
 
 use tomsg_rs::command::Command;
 use tomsg_rs::reply::*;
 use tomsg_rs::word::Word;
 
-use serde_json::value::to_raw_value;
-
 pub struct MatrixClient {
     server_name: Box<ServerName>,
-    homeserver_url: url::Url,
+    homeserver_url: http::Uri,
     access_token: String,
 
     db: Arc<Mutex<Database>>,
@@ -46,7 +44,7 @@ pub struct MatrixClient {
 impl MatrixClient {
     pub async fn new(
         server_name: Box<ServerName>,
-        homeserver_url: url::Url,
+        homeserver_url: http::Uri,
         access_token: String,
         db: Arc<Mutex<Database>>,
     ) -> Self {
@@ -55,7 +53,7 @@ impl MatrixClient {
             identification: None,
         };
 
-        let client = match homeserver_url.scheme() {
+        let client = match homeserver_url.scheme_str().unwrap() {
             "http" => todo!(),
             "https" => Client::https(homeserver_url.clone(), Some(session)),
             scheme => panic!("unknown scheme {}", scheme),
@@ -81,7 +79,7 @@ impl MatrixClient {
     pub fn server_name(&self) -> &ServerName {
         &self.server_name
     }
-    pub fn homserver_url(&self) -> &url::Url {
+    pub fn homserver_url(&self) -> &http::Uri {
         &self.homeserver_url
     }
     pub fn access_token(&self) -> &str {
@@ -89,12 +87,12 @@ impl MatrixClient {
     }
 
     /// make a request, as the given user_name.
-    pub async fn request<R: ruma_api::Endpoint + std::fmt::Debug>(
+    pub async fn request<R: ruma::api::OutgoingRequest + std::fmt::Debug>(
         &self,
         request: R,
         user_id: Option<&UserId>,
         ts: Option<i64>, // milliseconds
-    ) -> Result<R::Response, Error<R::ResponseError>> {
+    ) -> Result<R::IncomingResponse, Error<R::EndpointError>> {
         println!("[matrix] request: {:?}", request);
 
         let mut builder = RequestBuilder::new(&self.c, request);
@@ -121,34 +119,24 @@ impl MatrixClient {
     pub async fn create_puppet(&self, tomsg_name: Word) -> User {
         let local_part = format!("tomsg_{}", tomsg_name);
 
+        let mut request = register::Request::new();
+        request.username = Some(&local_part);
+        request.inhibit_login = true;
+
         println!("creating puppet for {}", tomsg_name);
         let res = self
             .c
-            .request_with_url_params(
-                register::Request {
-                    username: Some(local_part.clone()),
-                    password: None,
-                    device_id: None,
-                    initial_device_display_name: None,
-                    auth: None,
-                    kind: None,
-                    inhibit_login: true,
-                },
-                {
-                    let mut params = BTreeMap::new();
-                    params.insert("access_token".to_string(), self.access_token.to_string());
-                    Some(params)
-                },
-            )
+            .request_with_url_params(request, {
+                let mut params = BTreeMap::new();
+                params.insert("access_token".to_string(), self.access_token.to_string());
+                Some(params)
+            })
             .await
             .unwrap();
         let matrix_id = res.user_id;
 
         self.request(
-            set_display_name::Request {
-                user_id: matrix_id.clone(),
-                displayname: Some(format!("{} (tomsg)", tomsg_name)),
-            },
+            set_display_name::Request::new(&matrix_id, Some(&format!("{} (tomsg)", tomsg_name))),
             Some(&matrix_id),
             None,
         )
@@ -164,12 +152,12 @@ impl MatrixClient {
 
     pub async fn invite_matrix_user(
         &self,
-        room_id: RoomId,
+        room_id: &RoomId,
         inviter: &SendableUser,
-        invited: UserId,
+        invited: &UserId,
     ) -> invite_user::Response {
         let good = match inviter {
-            SendableUser::RoomUser(user) => user.check_room(&room_id),
+            SendableUser::RoomUser(user) => user.check_room(room_id),
             SendableUser::AppService(_) => true,
         };
         if !good {
@@ -178,10 +166,10 @@ impl MatrixClient {
 
         println!("inviting {} as {}", invited, inviter.get_matrix());
         self.request(
-            invite_user::Request {
+            invite_user::Request::new(
                 room_id,
-                recipient: invite_user::InvitationRecipient::UserId { user_id: invited },
-            },
+                invite_user::InvitationRecipient::UserId { user_id: invited },
+            ),
             Some(&inviter.get_matrix()),
             None,
         )
@@ -224,7 +212,7 @@ impl MatrixClient {
 
             self.puppet_join_room(
                 &user.get_matrix(),
-                room_matrix_id.to_owned(),
+                room_matrix_id,
                 Some(&get_appservice_sendable_user()),
             )
             .await;
@@ -251,24 +239,16 @@ impl MatrixClient {
     pub async fn puppet_join_room(
         &self,
         invited: &UserId,
-        room_id: RoomId,
+        room_id: &RoomId,
         inviter: Option<&SendableUser>,
     ) {
         if let Some(inviter) = inviter {
-            self.invite_matrix_user(room_id.clone(), inviter, invited.clone())
-                .await;
+            self.invite_matrix_user(room_id, inviter, invited).await;
         }
 
-        self.request(
-            join_room_by_id::Request {
-                room_id,
-                third_party_signed: None,
-            },
-            Some(invited),
-            None,
-        )
-        .await
-        .unwrap();
+        self.request(join_room_by_id::Request::new(room_id), Some(invited), None)
+            .await
+            .unwrap();
     }
 
     /// Create a new message with the given `data`, sending it as `sender` in the room with the
@@ -277,23 +257,19 @@ impl MatrixClient {
     /// `SendableUser::can_send_to` with the given `room_id`.
     pub async fn create_message(
         &self,
-        room_id: RoomId,
+        room_id: &RoomId,
         sender: &SendableUser,
         data: MessageEventContent,
         ts: i64,
-    ) -> create_message_event::Response {
+    ) -> send_message_event::Response {
         if !sender.can_send_to(&room_id) {
             panic!("RoomUser has different room_id");
         }
 
+        let message = AnyMessageEventContent::RoomMessage(data);
+
         let txn_id = self.get_txin().await.to_string();
-        let data = to_raw_value(&data).unwrap();
-        let request = create_message_event::Request {
-            room_id,
-            event_type: EventType::RoomMessage,
-            txn_id,
-            data,
-        };
+        let request = send_message_event::Request::new(room_id, &txn_id, &message);
 
         self.request(request, Some(&sender.get_matrix()), Some(ts))
             .await
@@ -304,35 +280,17 @@ impl MatrixClient {
     /// The alias should not include the server_name or the leading #, for example a correct
     /// `alias` would be 'coffee'.
     /// Returns the `RoomId` of the newly created room.
-    pub async fn create_room(&self, alias: String, friendly_name: String) -> RoomId {
-        self.request(
-            create_room::Request {
-                creation_content: None,
-                initial_state: vec![],
-                invite: vec![],
-                invite_3pid: vec![],
-                is_direct: None,
-                name: Some(friendly_name),
-                power_level_content_override: None,
-                preset: None,
-                room_alias_name: Some(alias),
-                room_version: None,
-                topic: None,
-                visibility: None,
-            },
-            None,
-            None,
-        )
-        .await
-        .unwrap()
-        .room_id
+    pub async fn create_room(&self, alias: &str, friendly_name: &str) -> RoomId {
+        let mut request = create_room::Request::new();
+        request.name = Some(friendly_name);
+        request.room_alias_name = Some(alias);
+
+        self.request(request, None, None).await.unwrap().room_id
     }
 
     pub async fn leave_room(&self, user: &RoomUser, room: &Room) {
         self.request(
-            leave_room::Request {
-                room_id: room.get_matrix().to_owned(),
-            },
+            leave_room::Request::new(room.get_matrix()),
             Some(&user.get_matrix()),
             None,
         )
@@ -365,8 +323,8 @@ pub fn matrix_to_url(item: MatrixToItem<'_>) -> String {
     format!("https://matrix.to/#/{}", slug)
 }
 
-pub fn mxc_to_url(client: &MatrixClient, url: &url::Url) -> String {
-    assert!(url.scheme() == "mxc");
+pub fn mxc_to_url(client: &MatrixClient, url: &http::Uri) -> String {
+    assert!(url.scheme_str().unwrap() == "mxc");
 
     let server_name = url.host().unwrap();
     let id = &url.path()[1..];

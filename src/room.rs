@@ -7,9 +7,9 @@ use crate::user::ManagedUser;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use ruma_identifiers::EventId;
-use ruma_identifiers::RoomId;
-use ruma_identifiers::UserId;
+use ruma::identifiers::EventId;
+use ruma::identifiers::RoomId;
+use ruma::identifiers::UserId;
 
 use tomsg_rs::command::Command;
 use tomsg_rs::id::Id;
@@ -179,7 +179,7 @@ impl Room {
         if pair.0 && user.0.is_puppet() {
             // REVIEW: is it correct that this is None?
             client
-                .puppet_join_room(user.get_matrix(), self.matrix_id.clone(), None)
+                .puppet_join_room(user.get_matrix(), &self.matrix_id, None)
                 .await;
         }
         if pair.1 {

@@ -22,7 +22,7 @@ use tokio::task;
 
 use futures::future;
 
-use ruma_identifiers::UserId;
+use ruma::identifiers::UserId;
 
 use once_cell::sync::{Lazy, OnceCell};
 

@@ -7,8 +7,8 @@ use crate::state::State;
 use crate::user::*;
 use crate::*;
 
-use ruma_events::room::message::{MessageEventContent, NoticeMessageEventContent};
-use ruma_identifiers::{RoomId, UserId};
+use ruma::events::room::message::{MessageEventContent, NoticeMessageEventContent};
+use ruma::identifiers::{RoomId, UserId};
 
 use tokio::select;
 use tokio::time;
@@ -75,7 +75,7 @@ pub async fn handle_command(
 
             matrix
                 .create_message(
-                    room_id,
+                    &room_id,
                     &get_appservice_sendable_user(),
                     MessageEventContent::Notice(NoticeMessageEventContent {
                         body: s,

@@ -31,12 +31,12 @@ use tomsg_rs::pushmessage::*;
 use tomsg_rs::reply::*;
 use tomsg_rs::word::Word;
 
-use ruma_events::room::message::{
+use ruma::events::room::message::{
     FormattedBody, InReplyTo, MessageEvent, MessageEventContent, MessageFormat, RelatesTo,
     TextMessageEventContent,
 };
-use ruma_events::{AnyMessageEvent, AnyRoomEvent};
-use ruma_identifiers::{EventId, UserId};
+use ruma::events::{AnyMessageEvent, AnyRoomEvent};
+use ruma::identifiers::{EventId, UserId};
 
 use rand::{thread_rng, Rng};
 
@@ -254,7 +254,7 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
 
     let matrix_id = get_matrix_client()
         .create_message(
-            room.get_matrix().to_owned(),
+            room.get_matrix(),
             &puppet,
             message_data,
             msg.timestamp
@@ -563,9 +563,9 @@ async fn bind(
             if should_invite {
                 get_matrix_client()
                     .invite_matrix_user(
-                        room_matrix_id,
+                        &room_matrix_id,
                         &get_appservice_sendable_user(),
-                        matrix_id.clone(),
+                        &matrix_id,
                     )
                     .await;
             }
@@ -655,10 +655,10 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
                 .invite_tomsg_members(&mut state, tomsg_name, &matrix_id, conn)
                 .await;
 
-            let invited = user.get_matrix().to_owned();
+            let invited = user.get_matrix();
 
             get_matrix_client()
-                .invite_matrix_user(matrix_id, &inviter, invited)
+                .invite_matrix_user(&matrix_id, &inviter, invited)
                 .await;
         }
 

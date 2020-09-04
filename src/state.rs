@@ -9,8 +9,8 @@ use crate::tomsg::{connect, register, RegisterError};
 use crate::user::*;
 use crate::util::random_alphanumeric;
 
-use ruma_identifiers::RoomId;
-use ruma_identifiers::UserId;
+use ruma::identifiers::RoomId;
+use ruma::identifiers::UserId;
 
 use tomsg_rs::line::Line;
 use tomsg_rs::word::Word;
@@ -71,7 +71,7 @@ impl State {
         let alias = format!("tomsg_{}", tomsg_name);
         let friendly_name = format!("{} (tomsg)", tomsg_name);
 
-        let room_id = client.create_room(alias, friendly_name).await;
+        let room_id = client.create_room(&alias, &friendly_name).await;
 
         let room = Room::new(RoomType::Plumbed, tomsg_name, room_id);
         self.add_room(room).unwrap()
