@@ -60,23 +60,23 @@ impl Room {
         }
     }
 
-    pub fn handled_message(&self, id: &MappingId<Id, EventId>) -> bool {
+    pub fn handled_message(&self, id: MappingId<Id, EventId>) -> bool {
         self.handled_messages.has(id)
     }
 
-    pub fn get_handled_message(&self, id: &MappingId<Id, EventId>) -> Option<&Message> {
+    pub fn get_handled_message(&self, id: MappingId<Id, EventId>) -> Option<&Message> {
         self.handled_messages.get(id)
     }
 
-    pub fn handle_message(&mut self, db: &Database, message_id: Id, matrix_id: EventId) -> bool {
-        if self.handled_message(&MappingId::External(message_id)) {
+    pub fn handle_message(&mut self, db: &Database, message_id: &Id, matrix_id: EventId) -> bool {
+        if self.handled_message(MappingId::External(message_id)) {
             return false;
         }
 
-        db.insert_handled_message(&message_id, &matrix_id, &self)
+        db.insert_handled_message(message_id, &matrix_id, &self)
             .unwrap();
 
-        let msg = Message::new(matrix_id, message_id, &self);
+        let msg = Message::new(matrix_id, message_id.to_owned(), &self);
         self.handled_messages.insert(msg);
 
         true
@@ -87,7 +87,7 @@ impl Room {
             return false;
         }
 
-        db.insert_room_member(&self, &MappingId::Matrix(user))
+        db.insert_room_member(&self, MappingId::Matrix(&user))
             .unwrap();
 
         true
@@ -98,7 +98,7 @@ impl Room {
             return false;
         }
 
-        db.insert_room_member(&self, &MappingId::External(user))
+        db.insert_room_member(&self, MappingId::External(&user))
             .unwrap();
 
         true
@@ -208,14 +208,14 @@ impl Room {
             let tomsg_name = user.get_external();
             let tomsg_joined = self.tomsg_invited_or_joined.remove(tomsg_name);
             if tomsg_joined {
-                db.remove_room_member(&self, &MappingId::External(tomsg_name.to_owned()))
+                db.remove_room_member(&self, MappingId::External(tomsg_name))
                     .unwrap();
             }
 
             let matrix_id = user.get_matrix();
             let matrix_joined = self.matrix_invited_or_joined.remove(matrix_id);
             if matrix_joined {
-                db.remove_room_member(&self, &MappingId::Matrix(matrix_id.to_owned()))
+                db.remove_room_member(&self, MappingId::Matrix(matrix_id))
                     .unwrap();
             }
 

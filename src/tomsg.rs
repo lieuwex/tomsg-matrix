@@ -55,7 +55,7 @@ macro_rules! get_or_make_plumbed_room {
     ($state:expr, $tomsg_name:expr) => {{
         let state = $state;
         let name = $tomsg_name;
-        match state.get_room_mut(&MappingId::External(name.clone())) {
+        match state.get_room_mut(MappingId::External(&name)) {
             Some(r) => r,
             None => state.create_plumbed_room(get_matrix_client(), name).await,
         }
@@ -69,7 +69,7 @@ macro_rules! get_or_make_plumbed_room {
 /// If `Err(true)`, the user has been found, but is a real user.
 /// If `Err(false)`, the user has not been found or is not in the room.
 async fn get_puppet(msg: &Message, state: &mut State) -> std::result::Result<RoomUser, bool> {
-    let user = match state.get_user(&MappingId::External(msg.username.clone())) {
+    let user = match state.get_user(MappingId::External(&msg.username)) {
         None => {
             println!("no user found with tomsg username '{}'", msg.username);
             return Err(false);
@@ -137,7 +137,7 @@ async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
 
         get_history = false;
         for msg in messages {
-            if room.handled_message(&MappingId::External(msg.id)) {
+            if room.handled_message(MappingId::External(&msg.id)) {
                 continue;
             }
             get_history = true;
@@ -160,7 +160,7 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
     };
 
     let room = get_or_make_plumbed_room!(state, msg.roomname.clone());
-    if room.handled_message(&MappingId::External(msg.id)) {
+    if room.handled_message(MappingId::External(&msg.id)) {
         println!(
             "already handled tomsg message with id {}, ignoring...",
             msg.id
@@ -176,7 +176,7 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
     let reply_event_id = match msg.reply_on {
         None => None,
         Some(id) => {
-            let event_id = match room.get_handled_message(&MappingId::External(id)) {
+            let event_id = match room.get_handled_message(MappingId::External(&id)) {
                 // create a random (hopefuly invalid) ID.
                 // TODO: actually fetch the message from the tomsg server.
                 None => EventId::new(&get_matrix_client().server_name()),
@@ -267,7 +267,7 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
 
     {
         let db = db.lock().unwrap();
-        room.handle_message(&db, msg.id, matrix_id);
+        room.handle_message(&db, &msg.id, matrix_id);
     }
 }
 
@@ -510,7 +510,7 @@ async fn bind(
                 .lock()
                 .await
                 .users
-                .has(&MappingId::External(user.get_external().to_owned()))
+                .has(MappingId::External(user.get_external()))
     );
 
     let (creds, matrix_id) = match &user.0 {
@@ -633,10 +633,7 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
 
             let db = state.db.clone();
 
-            let inviter = state
-                .users
-                .get(&MappingId::External(inviter.clone()))
-                .cloned();
+            let inviter = state.users.get(MappingId::External(&inviter)).cloned();
 
             let room = get_or_make_plumbed_room!(&mut state, roomname.clone());
             room.insert_and_invite(&db, &get_matrix_client(), conn, &user)
@@ -666,10 +663,7 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
             let mut state = get_state().lock().await;
             let db = state.db.clone();
 
-            let user = match state
-                .ensure_puppet(&get_matrix_client(), user_name.clone())
-                .await
-            {
+            let user = match state.ensure_puppet(&get_matrix_client(), &user_name).await {
                 None => {
                     eprintln!(
                         "we already got a real user for tomsg user {}. Ignoring Join.",

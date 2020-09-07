@@ -23,9 +23,9 @@ use matrix_appservice_rs::{Mappable, MappingId};
 /// Remove any puppet that uses the given tomsg username
 ///
 /// Returns whether or not there was a puppet to remove.
-async fn take_over(state: &mut State, matrix: &MatrixClient, tomsg_username: Word) -> bool {
+async fn take_over(state: &mut State, matrix: &MatrixClient, tomsg_username: &Word) -> bool {
     let id = MappingId::External(tomsg_username);
-    let user = match state.get_user(&id) {
+    let user = match state.get_user(id.clone()) {
         None => {
             eprintln!("user with tomsg username not found, everything should be fine");
             return false;
@@ -39,7 +39,7 @@ async fn take_over(state: &mut State, matrix: &MatrixClient, tomsg_username: Wor
     let user = user.to_owned();
 
     // remove puppet from db
-    state.remove_user(&id).await;
+    state.remove_user(id).await;
 
     for room in state.rooms.iter_mut() {
         let user = match room.to_room_user(user.clone()) {
@@ -68,7 +68,7 @@ pub async fn handle_command(
             let s = String::from($text);
 
             let room_id = state
-                .get_room(&MappingId::Matrix(room_id.clone()))
+                .get_room(MappingId::Matrix(&room_id))
                 .map(|r| r.get_matrix().to_owned())
                 .or_else(|| state.get_managment_room(&sender_id))
                 .expect(&format!("room {} not found in state", room_id));
@@ -105,10 +105,10 @@ pub async fn handle_command(
                 None
             };
 
-            let id = MappingId::Matrix(sender_id.clone());
+            let id = MappingId::Matrix(&sender_id);
 
             let creds_differ = {
-                let user = state.users.get(&id);
+                let user = state.users.get(id.clone());
                 match user {
                     None => true,
                     Some(user) => match &user.0 {
@@ -131,29 +131,33 @@ pub async fn handle_command(
                 // Kick out the puppet from all rooms and stop managing it, "forget" the puppet, making
                 // room for the real user.
                 if let Some(creds) = &creds {
-                    take_over(state, matrix, creds.username.to_owned()).await;
+                    take_over(state, matrix, &creds.username).await;
                 }
 
                 let creds = match creds {
                     Some(creds) => Some(creds),
-                    None => state.users.get(&id).cloned().and_then(|u| match u.0 {
-                        User::Real {
-                            tomsg_credentials, ..
-                        } => Some(tomsg_credentials),
-                        User::Puppet { .. } => None,
-                    }),
+                    None => state
+                        .users
+                        .get(id.clone())
+                        .cloned()
+                        .and_then(|u| match u.0 {
+                            User::Real {
+                                tomsg_credentials, ..
+                            } => Some(tomsg_credentials),
+                            User::Puppet { .. } => None,
+                        }),
                 };
 
                 // remove any user that is associated with the given id
-                state.users.remove(&id);
+                state.users.remove(id);
 
                 // create the real user in the database, register if creds is None.
-                let user = state.ensure_real_user(sender_id.clone(), creds).await;
+                let user = state.ensure_real_user(&sender_id, creds).await;
                 // bind, this will also create and join rooms
                 shed.bind(user).await.unwrap();
             } else {
                 // since creds_differ is false, the user must exist and is not a puppet.
-                let user = state.get_user(&id).unwrap().to_owned();
+                let user = state.get_user(id).unwrap().to_owned();
                 shed.bind(user).await.unwrap();
             }
 
@@ -164,12 +168,12 @@ pub async fn handle_command(
             if let Some(user_id) = state.is_management_room(&room_id) {
                 reply!(format!("current room is management room for {}", user_id));
                 return;
-            } else if state.rooms.has(&MappingId::Matrix(room_id.clone())) {
+            } else if state.rooms.has(MappingId::Matrix(&room_id)) {
                 reply!("given room is already managed");
                 return;
             }
 
-            let sender = state.ensure_real_user(sender_id.clone(), None).await;
+            let sender = state.ensure_real_user(&sender_id, None).await;
             let mut tomsg_conn = shed.ensure_connection(&sender).await.unwrap();
 
             let tomsg_name = match words.get(1) {

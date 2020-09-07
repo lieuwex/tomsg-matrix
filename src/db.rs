@@ -216,7 +216,7 @@ impl Database {
         )?;
         Ok(())
     }
-    pub fn insert_room_member(&self, room: &Room, id: &MappingId<Word, UserId>) -> Result<()> {
+    pub fn insert_room_member(&self, room: &Room, id: MappingId<Word, UserId>) -> Result<()> {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tomsg_name FROM rooms WHERE tomsg_name = ?1")?;
@@ -248,7 +248,7 @@ impl Database {
         )?;
         Ok(())
     }
-    pub fn remove_room_member(&self, room: &Room, id: &MappingId<Word, UserId>) -> Result<()> {
+    pub fn remove_room_member(&self, room: &Room, id: MappingId<Word, UserId>) -> Result<()> {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tomsg_name FROM rooms WHERE tomsg_name = ?1")?;

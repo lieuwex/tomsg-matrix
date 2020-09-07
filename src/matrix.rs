@@ -195,20 +195,20 @@ impl MatrixClient {
 
         let mut res = vec![];
         for member in members {
-            if let Some(u) = state.get_user(&MappingId::External(member.clone())) {
+            if let Some(u) = state.get_user(MappingId::External(&member)) {
                 if !u.is_puppet() {
                     continue;
                 }
 
                 let room = state
-                    .get_room(&MappingId::External(room_tomsg_name.clone()))
+                    .get_room(MappingId::External(&room_tomsg_name))
                     .unwrap();
                 if room.matrix_invited_or_joined.contains(&u.get_matrix()) {
                     continue;
                 }
             }
 
-            let user = state.ensure_puppet(&self, member).await.unwrap();
+            let user = state.ensure_puppet(&self, &member).await.unwrap();
 
             self.puppet_join_room(
                 &user.get_matrix(),
@@ -223,7 +223,7 @@ impl MatrixClient {
         {
             let db = self.db.lock().unwrap();
             let room = state
-                .get_room_mut(&MappingId::External(room_tomsg_name))
+                .get_room_mut(MappingId::External(&room_tomsg_name))
                 .unwrap();
             for user in &res {
                 room.insert_user(&db, user);

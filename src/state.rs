@@ -85,17 +85,14 @@ impl State {
     }
 
     fn add_room(&mut self, room: Room) -> Option<&mut Room> {
-        if self
-            .rooms
-            .has(&MappingId::External(room.get_external().to_owned()))
-        {
+        if self.rooms.has(MappingId::External(room.get_external())) {
             return None;
         }
 
         self.db.lock().unwrap().insert_room(&room).unwrap();
         Some(self.rooms.insert(room))
     }
-    pub async fn remove_room(&mut self, id: &MappingId<Word, RoomId>) -> bool {
+    pub async fn remove_room(&mut self, id: MappingId<'_, Word, RoomId>) -> bool {
         if let Some(room) = self.rooms.remove(id) {
             self.db
                 .lock()
@@ -108,20 +105,20 @@ impl State {
         }
     }
 
-    pub fn get_room(&self, id: &MappingId<Word, RoomId>) -> Option<&Room> {
+    pub fn get_room(&self, id: MappingId<Word, RoomId>) -> Option<&Room> {
         self.rooms.get(id)
     }
-    pub fn get_room_mut(&mut self, id: &MappingId<Word, RoomId>) -> Option<&mut Room> {
+    pub fn get_room_mut(&mut self, id: MappingId<Word, RoomId>) -> Option<&mut Room> {
         self.rooms.get_mut(id)
     }
 
-    pub fn get_user(&self, id: &MappingId<Word, UserId>) -> Option<&ManagedUser> {
+    pub fn get_user(&self, id: MappingId<Word, UserId>) -> Option<&ManagedUser> {
         self.users.get(id)
     }
-    pub fn get_user_mut(&mut self, id: &MappingId<Word, UserId>) -> Option<&mut ManagedUser> {
+    pub fn get_user_mut(&mut self, id: MappingId<Word, UserId>) -> Option<&mut ManagedUser> {
         self.users.get_mut(id)
     }
-    pub async fn remove_user(&mut self, id: &MappingId<Word, UserId>) {
+    pub async fn remove_user(&mut self, id: MappingId<'_, Word, UserId>) {
         if let Some(user) = self.users.remove(id) {
             let db = self.db.lock().unwrap();
             db.remove_user(&user).unwrap();
@@ -133,16 +130,16 @@ impl State {
     pub async fn ensure_puppet(
         &mut self,
         client: &MatrixClient,
-        tomsg_name: Word,
+        tomsg_name: &Word,
     ) -> Option<ManagedUser> {
-        if let Some(user) = self.get_user(&MappingId::External(tomsg_name.clone())) {
+        if let Some(user) = self.get_user(MappingId::External(tomsg_name)) {
             return match &user.0 {
                 User::Real { .. } => None,
                 User::Puppet { .. } => Some(user.clone()),
             };
         }
 
-        let user = ManagedUser(client.create_puppet(tomsg_name).await);
+        let user = ManagedUser(client.create_puppet(tomsg_name.to_owned()).await);
         self.db.lock().unwrap().insert_user(&user).unwrap();
         self.users.insert(user.clone());
         Some(user)
@@ -186,10 +183,10 @@ impl State {
     /// This function panics if the given Matrix user id is a puppet.
     pub async fn ensure_real_user(
         &mut self,
-        user_id: UserId,
+        user_id: &UserId,
         creds: Option<TomsgCredentials>,
     ) -> ManagedUser {
-        if let Some(user) = self.get_user(&MappingId::Matrix(user_id.clone())) {
+        if let Some(user) = self.get_user(MappingId::Matrix(user_id)) {
             if user.0.is_puppet() {
                 panic!("user exists, but is not a real user");
             }
@@ -228,7 +225,7 @@ impl State {
 
         let user = ManagedUser(User::Real {
             tomsg_credentials: creds,
-            matrix_id: user_id,
+            matrix_id: user_id.to_owned(),
         });
         self.db.lock().unwrap().insert_user(&user).unwrap();
         self.users.insert(user.clone());

@@ -49,7 +49,7 @@ async fn send_message_tomsg(
 
     {
         let db = db.lock().unwrap();
-        room.handle_message(&db, tomsg_message_id, event_id);
+        room.handle_message(&db, &tomsg_message_id, event_id);
     }
 }
 
@@ -58,17 +58,17 @@ async fn invite_user(
     state: &mut State,
     shed: &mut ConnectionShed,
     db: &Arc<Mutex<Database>>,
-    room_id: RoomId,
+    room_id: &RoomId,
     invited_user: &ManagedUser,
 ) -> bool {
     let room = state
         .rooms
-        .get(&MappingId::Matrix(room_id.clone()))
+        .get(MappingId::Matrix(room_id))
         .expect("room not found");
 
     // get an user that is in the room and we manage as the inviter.
     let inviter = room.matrix_invited_or_joined.iter().find_map(|user_id| {
-        let user = state.get_user(&MappingId::Matrix(user_id.clone()))?;
+        let user = state.get_user(MappingId::Matrix(user_id))?;
 
         if user.0.is_puppet() {
             // we need to have ownership over the tomsg connection, which only happens with real
@@ -90,7 +90,7 @@ async fn invite_user(
     let mut conn = shed.ensure_connection(&inviter).await.unwrap();
 
     {
-        let room = state.rooms.get_mut(&MappingId::Matrix(room_id)).unwrap();
+        let room = state.rooms.get_mut(MappingId::Matrix(room_id)).unwrap();
         // invite the tomsg user in the room, and store that
         room.ensure_tomsg_user_in_room(&db, &mut conn, invited_user.get_external().to_owned())
             .await;
@@ -107,8 +107,8 @@ async fn invite_user(
     true
 }
 
-fn get_reply_to(event_id: EventId, room: &Room) -> Option<Id> {
-    room.get_handled_message(&MappingId::Matrix(event_id))
+fn get_reply_to(event_id: &EventId, room: &Room) -> Option<Id> {
+    room.get_handled_message(MappingId::Matrix(event_id))
         .map(|msg| msg.get_external().to_owned())
 }
 
@@ -116,14 +116,15 @@ async fn get_room_user(
     state: &mut State,
     shed: &mut ConnectionShed,
     db: &Arc<Mutex<Database>>,
-    user_id: UserId,
-    room_id: RoomId,
+    user_id: &UserId,
+    room_id: &RoomId,
 ) -> Option<RoomUser> {
-    let room_mapping_id = MappingId::Matrix(room_id.clone());
+    let room_id_cloned = room_id.clone();
+    let room_mapping_id = MappingId::Matrix(&room_id_cloned);
 
     let user = state.ensure_real_user(user_id, None).await;
 
-    let room = match state.rooms.get(&room_mapping_id) {
+    let room = match state.rooms.get(room_mapping_id.clone()) {
         None => {
             println!("get_room_user: room not found");
             return None;
@@ -144,13 +145,13 @@ async fn get_room_user(
         }
     }
 
-    let room = state.rooms.get_mut(&room_mapping_id).unwrap();
+    let room = state.rooms.get_mut(room_mapping_id).unwrap();
     room.to_room_user(user).ok()
 }
 
-fn is_puppet(info: &mut Info<'_>, user_id: UserId) -> bool {
+fn is_puppet(info: &mut Info<'_>, user_id: &UserId) -> bool {
     info.state
-        .get_user(&MappingId::Matrix(user_id))
+        .get_user(MappingId::Matrix(user_id))
         .map(|u| u.0.is_puppet())
         .unwrap_or(false)
 }
@@ -159,11 +160,8 @@ fn is_puppet(info: &mut Info<'_>, user_id: UserId) -> bool {
 /// If the user has been found, it _can_ be a puppet and we will extract that information.
 /// If no information is found in the database, it can't be a puppet and we will create a new
 /// real user for the sender.
-async fn ensure_real_user(info: &mut Info<'_>, sender_id: UserId) -> (bool, ManagedUser) {
-    let sender_user = info
-        .state
-        .get_user(&MappingId::Matrix(sender_id.clone()))
-        .cloned();
+async fn ensure_real_user(info: &mut Info<'_>, sender_id: &UserId) -> (bool, ManagedUser) {
+    let sender_user = info.state.get_user(MappingId::Matrix(sender_id)).cloned();
 
     match sender_user {
         None => (false, info.state.ensure_real_user(sender_id, None).await),
@@ -211,14 +209,16 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
     let event_id = event.event_id().to_owned();
     let room_id = event.room_id().to_owned();
     let sender_id = event.sender().to_owned();
-    let room_mapping_id = MappingId::Matrix(room_id.clone());
+
+    let room_id_cloned = room_id.clone();
+    let room_mapping_id = MappingId::Matrix(&room_id_cloned);
 
     if sender_id.localpart() == get_local_part() {
         return;
     }
 
     // We don't need to handle events sent by a puppet of ours.
-    if is_puppet(&mut info, sender_id.clone()) {
+    if is_puppet(&mut info, &sender_id) {
         println!(
             "ignorning message with id {} because it's from puppet {}",
             event_id, sender_id
@@ -249,7 +249,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
     // If a room can be found, we upgrade the sender to a `RoomUser` to make sure we're handling
     // the correct user.
     let (sender_room_user, sender_user) = {
-        let room = info.state.rooms.get(&MappingId::Matrix(room_id.clone()));
+        let room = info.state.rooms.get(MappingId::Matrix(room_id.clone()));
         match room {
             None => (None, Some(sender_user)),
             Some(room) => match room.to_room_user(sender_user) {
@@ -283,7 +283,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
             let mut conn = {
                 let mut shed = TOMSG_CONN_SHED.lock().await;
 
-                let user = get_room_user(info.state, &mut shed, info.db, sender_id, room_id)
+                let user = get_room_user(info.state, &mut shed, info.db, &sender_id, &room_id)
                     .await
                     .unwrap();
 
@@ -293,7 +293,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
             let room = info
                 .state
                 .rooms
-                .get_mut(&room_mapping_id)
+                .get_mut(room_mapping_id)
                 .expect("room is not a management room, but is None");
 
             // TODO
@@ -301,7 +301,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
             let mut reply_to = relates_to
                 .and_then(|r: RelatesTo| r.in_reply_to)
                 .map(|r| r.event_id)
-                .and_then(|event_id| get_reply_to(event_id, room));
+                .and_then(|event_id| get_reply_to(&event_id, room));
 
             let mut trimming_reply = reply_to.is_some();
             for line in body.trim_end().lines() {
@@ -342,7 +342,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
             let mut conn = {
                 let mut shed = TOMSG_CONN_SHED.lock().await;
 
-                let user = get_room_user(info.state, &mut shed, info.db, sender_id, room_id)
+                let user = get_room_user(info.state, &mut shed, info.db, &sender_id, &room_id)
                     .await
                     .unwrap();
 
@@ -352,7 +352,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
             let room = info
                 .state
                 .rooms
-                .get_mut(&room_mapping_id)
+                .get_mut(room_mapping_id)
                 .expect("room is not a management room, but is None");
 
             let url = match $url {
@@ -451,14 +451,14 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
                 MembershipState::Join => {
                     // state_key is the person that joined
 
-                    if !info.state.rooms.has(&MappingId::Matrix(room_id.clone())) {
+                    if !info.state.rooms.has(MappingId::Matrix(&room_id)) {
                         return;
                     }
 
                     let mut shed = TOMSG_CONN_SHED.lock().await;
 
                     // TODO: make room join fail
-                    get_room_user(info.state, &mut shed, info.db, state_key, room_id)
+                    get_room_user(info.state, &mut shed, info.db, &state_key, &room_id)
                         .await
                         .unwrap();
                 }
@@ -467,7 +467,7 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
                     // state_key is the person that left
 
                     if state_key.localpart() == "tomsgbot" {
-                        info.state.remove_room(&MappingId::Matrix(room_id)).await;
+                        info.state.remove_room(MappingId::Matrix(&room_id)).await;
                     } else {
                         println!("tomsg doesn't support leaving a room, lol");
                     }
