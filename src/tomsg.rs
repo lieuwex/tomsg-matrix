@@ -146,6 +146,12 @@ async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
         }
     }
 
+    eprintln!(
+        "retrieved history for room {} ({}): {:?}",
+        room.get_matrix(),
+        room.get_external(),
+        res
+    );
     res
 }
 

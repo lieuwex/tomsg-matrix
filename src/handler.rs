@@ -31,6 +31,7 @@ use ruma::Raw;
 
 async fn send_message_tomsg(
     ch: &mut Channel,
+    sender: &RoomUser,
     tomsg_room_name: Word,
     line: Line,
     reply_to: Option<Id>,
@@ -39,13 +40,22 @@ async fn send_message_tomsg(
     room: &mut Room,
 ) {
     let res = ch
-        .send(Command::Send(tomsg_room_name, reply_to, line))
+        .send(Command::Send(tomsg_room_name, reply_to, line.clone()))
         .await
         .unwrap();
     let tomsg_message_id = match res {
         Reply::Number(n) => Id::try_from(n).expect("expected Id"),
         _ => panic!("expected number"),
     };
+
+    eprintln!(
+        "[{} ({})] {} -> {} '{}'",
+        sender.get_matrix(),
+        sender.get_external(),
+        event_id,
+        tomsg_message_id,
+        line
+    );
 
     {
         let db = db.lock().unwrap();
@@ -280,14 +290,15 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
             let _formatted = $formatted;
             let relates_to: Option<RelatesTo> = $relates_to;
 
-            let mut conn = {
+            let (user, mut conn) = {
                 let mut shed = TOMSG_CONN_SHED.lock().await;
 
                 let user = get_room_user(info.state, &mut shed, info.db, &sender_id, &room_id)
                     .await
                     .unwrap();
+                let conn = shed.ensure_connection(&user).await.unwrap();
 
-                shed.ensure_connection(&user).await.unwrap()
+                (user, conn)
             };
 
             let room = info
@@ -322,6 +333,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
 
                 send_message_tomsg(
                     &mut conn,
+                    &user,
                     room.get_external().to_owned(),
                     line,
                     reply_to,
@@ -339,14 +351,15 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
 
     macro_rules! handle_file_event {
         ($url:expr) => {{
-            let mut conn = {
+            let (user, mut conn) = {
                 let mut shed = TOMSG_CONN_SHED.lock().await;
 
                 let user = get_room_user(info.state, &mut shed, info.db, &sender_id, &room_id)
                     .await
                     .unwrap();
+                let conn = shed.ensure_connection(&user).await.unwrap();
 
-                shed.ensure_connection(&user).await.unwrap()
+                (user, conn)
             };
 
             let room = info
@@ -370,6 +383,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
 
             send_message_tomsg(
                 &mut conn,
+                &user,
                 room.get_external().to_owned(),
                 line,
                 None,
