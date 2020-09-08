@@ -481,7 +481,12 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
                     // state_key is the person that left
 
                     if state_key.localpart() == "tomsgbot" {
-                        info.state.remove_room(MappingId::Matrix(&room_id)).await;
+                        // TODO: disabled handling a leave of tomsgbot, have to figure this out
+                        // when we got kicked by irc appservice.
+                        // If this is enabled we also need to actually make the puppets leave the
+                        // room too.
+                        //info.state.remove_room(MappingId::Matrix(&room_id)).await;
+                        eprintln!("disabled handling a leave of tomsgbot");
                     } else {
                         println!("tomsg doesn't support leaving a room, lol");
                     }
