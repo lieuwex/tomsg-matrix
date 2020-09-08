@@ -118,10 +118,13 @@ impl State {
     pub fn get_user_mut(&mut self, id: MappingId<Word, UserId>) -> Option<&mut ManagedUser> {
         self.users.get_mut(id)
     }
-    pub async fn remove_user(&mut self, id: MappingId<'_, Word, UserId>) {
+    pub async fn remove_user(&mut self, id: MappingId<'_, Word, UserId>) -> Option<ManagedUser> {
         if let Some(user) = self.users.remove(id) {
             let db = self.db.lock().unwrap();
             db.remove_user(&user).unwrap();
+            Some(user)
+        } else {
+            None
         }
     }
 

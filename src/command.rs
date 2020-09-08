@@ -36,10 +36,9 @@ async fn take_over(state: &mut State, matrix: &MatrixClient, tomsg_username: &Wo
         eprintln!("already a real user...");
         return false;
     }
-    let user = user.to_owned();
 
     // remove puppet from db
-    state.remove_user(id).await;
+    let user = state.remove_user(id).await.unwrap();
 
     for room in state.rooms.iter_mut() {
         let user = match room.to_room_user(user.clone()) {
