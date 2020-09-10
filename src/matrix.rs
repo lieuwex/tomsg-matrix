@@ -79,7 +79,7 @@ impl MatrixClient {
     pub fn server_name(&self) -> &ServerName {
         &self.server_name
     }
-    pub fn homserver_url(&self) -> &http::Uri {
+    pub fn homeserver_url(&self) -> &http::Uri {
         &self.homeserver_url
     }
     pub fn access_token(&self) -> &str {
@@ -164,13 +164,13 @@ impl MatrixClient {
             panic!("inviter RoomUser has different room_id");
         }
 
-        println!("inviting {} as {}", invited, inviter.get_matrix());
+        println!("inviting {} as {}", invited, inviter.as_matrix());
         self.request(
             invite_user::Request::new(
                 room_id,
                 invite_user::InvitationRecipient::UserId { user_id: invited },
             ),
-            Some(&inviter.get_matrix()),
+            Some(&inviter.as_matrix()),
             None,
         )
         .await
@@ -203,7 +203,7 @@ impl MatrixClient {
                 let room = state
                     .get_room(MappingId::External(&room_tomsg_name))
                     .unwrap();
-                if room.matrix_invited_or_joined.contains(&u.get_matrix()) {
+                if room.matrix_invited_or_joined.contains(&u.as_matrix()) {
                     continue;
                 }
             }
@@ -211,7 +211,7 @@ impl MatrixClient {
             let user = state.ensure_puppet(&self, &member).await.unwrap();
 
             self.puppet_join_room(
-                &user.get_matrix(),
+                &user.as_matrix(),
                 room_matrix_id,
                 Some(&get_appservice_sendable_user()),
             )
@@ -271,7 +271,7 @@ impl MatrixClient {
         let txn_id = self.get_txin().await.to_string();
         let request = send_message_event::Request::new(room_id, &txn_id, &message);
 
-        self.request(request, Some(&sender.get_matrix()), Some(ts))
+        self.request(request, Some(&sender.as_matrix()), Some(ts))
             .await
             .unwrap()
     }
@@ -290,8 +290,8 @@ impl MatrixClient {
 
     pub async fn leave_room(&self, user: &RoomUser, room: &Room) {
         self.request(
-            leave_room::Request::new(room.get_matrix()),
-            Some(&user.get_matrix()),
+            leave_room::Request::new(room.as_matrix()),
+            Some(&user.as_matrix()),
             None,
         )
         .await
@@ -300,39 +300,12 @@ impl MatrixClient {
 
     pub async fn get_room_event(
         &self,
-        room_id: RoomId,
-        event_id: EventId,
+        room_id: &RoomId,
+        event_id: &EventId,
     ) -> Option<Raw<AnyRoomEvent>> {
-        self.request(get_room_event::Request { room_id, event_id }, None, None)
+        self.request(get_room_event::Request::new(room_id, event_id), None, None)
             .await
             .ok()
             .map(|res| res.event)
     }
-}
-
-pub enum MatrixToItem<'a> {
-    Event(&'a RoomId, &'a EventId),
-    User(&'a UserId),
-}
-pub fn matrix_to_url(item: MatrixToItem<'_>) -> String {
-    let slug = match item {
-        MatrixToItem::Event(room_id, event_id) => format!("{}/{}", room_id, event_id),
-        MatrixToItem::User(user_id) => format!("{}", user_id),
-    };
-
-    format!("https://matrix.to/#/{}", slug)
-}
-
-pub fn mxc_to_url(client: &MatrixClient, url: &http::Uri) -> String {
-    assert!(url.scheme_str().unwrap() == "mxc");
-
-    let server_name = url.host().unwrap();
-    let id = &url.path()[1..];
-
-    format!(
-        "{}_matrix/media/r0/download/{}/{}",
-        client.homserver_url(),
-        server_name,
-        id
-    )
 }

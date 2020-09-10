@@ -111,8 +111,8 @@ impl Room {
     /// user list and the tomsg user list.
     pub fn insert_user(&mut self, db: &Database, user: &ManagedUser) -> (bool, bool) {
         (
-            self.insert_matrix_user(db, user.get_matrix().clone()),
-            self.insert_tomsg_user(db, user.get_external().clone()),
+            self.insert_matrix_user(db, user.as_matrix().clone()),
+            self.insert_tomsg_user(db, user.as_external().clone()),
         )
     }
 
@@ -146,8 +146,8 @@ impl Room {
     /// Returns whether or not the given user is doubly managed in the current room.
     /// This means that the user is both in the tomsg user list and the matrix user list.
     pub fn in_room(&self, user: &ManagedUser) -> bool {
-        self.tomsg_invited_or_joined.contains(user.get_external())
-            && self.matrix_invited_or_joined.contains(user.get_matrix())
+        self.tomsg_invited_or_joined.contains(user.as_external())
+            && self.matrix_invited_or_joined.contains(user.as_matrix())
     }
 
     /// Upgrades the given `ManagedUser` into a `RoomUser` iff the user is in the current room, in that
@@ -158,7 +158,7 @@ impl Room {
     /// This operation is cheap.
     pub fn to_room_user(&self, user: ManagedUser) -> Result<RoomUser, ManagedUser> {
         if self.in_room(&user) {
-            Ok(RoomUser(user, self.get_matrix().clone()))
+            Ok(RoomUser(user, self.as_matrix().clone()))
         } else {
             Err(user)
         }
@@ -179,13 +179,13 @@ impl Room {
         if pair.0 && user.0.is_puppet() {
             // REVIEW: is it correct that this is None?
             client
-                .puppet_join_room(user.get_matrix(), &self.matrix_id, None)
+                .puppet_join_room(user.as_matrix(), &self.matrix_id, None)
                 .await;
         }
         if pair.1 {
             conn.send(Command::Invite(
                 self.tomsg_name.clone(),
-                user.get_external().clone(),
+                user.as_external().clone(),
             ))
             .await
             .unwrap();
@@ -205,14 +205,14 @@ impl Room {
         let (tomsg_joined, matrix_joined) = {
             let db = db.lock().unwrap();
 
-            let tomsg_name = user.get_external();
+            let tomsg_name = user.as_external();
             let tomsg_joined = self.tomsg_invited_or_joined.remove(tomsg_name);
             if tomsg_joined {
                 db.remove_room_member(&self, MappingId::External(tomsg_name))
                     .unwrap();
             }
 
-            let matrix_id = user.get_matrix();
+            let matrix_id = user.as_matrix();
             let matrix_joined = self.matrix_invited_or_joined.remove(matrix_id);
             if matrix_joined {
                 db.remove_room_member(&self, MappingId::Matrix(matrix_id))
@@ -236,14 +236,14 @@ impl Mappable for Room {
     type MatrixType = RoomId;
     type ExternalType = Word;
 
-    fn get_matrix(&self) -> &RoomId {
+    fn as_matrix(&self) -> &RoomId {
         &self.matrix_id
     }
     fn into_matrix(self) -> RoomId {
         self.matrix_id
     }
 
-    fn get_external(&self) -> &Word {
+    fn as_external(&self) -> &Word {
         &self.tomsg_name
     }
     fn into_external(self) -> Word {

@@ -85,7 +85,7 @@ impl State {
     }
 
     fn add_room(&mut self, room: Room) -> Option<&mut Room> {
-        if self.rooms.has(MappingId::External(room.get_external())) {
+        if self.rooms.has(MappingId::External(room.as_external())) {
             return None;
         }
 
@@ -97,7 +97,7 @@ impl State {
             self.db
                 .lock()
                 .unwrap()
-                .remove_room(room.get_external())
+                .remove_room(room.as_external())
                 .unwrap();
             true
         } else {

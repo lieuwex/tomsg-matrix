@@ -178,7 +178,7 @@ impl Database {
         };
 
         for user in users {
-            let tomsg = user.get_external();
+            let tomsg = user.as_external();
 
             let auto_generated = match &user.0 {
                 User::Puppet { .. } => unreachable!(),
@@ -195,7 +195,7 @@ impl Database {
         }
 
         for user in puppets {
-            let tomsg = user.get_external();
+            let tomsg = user.as_external();
             map.entry(tomsg.to_owned()).or_insert(user);
         }
 
@@ -220,7 +220,7 @@ impl Database {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tomsg_name FROM rooms WHERE tomsg_name = ?1")?;
-        let room_id = stmt.query_row(params![room.get_external().as_str()], |row| {
+        let room_id = stmt.query_row(params![room.as_external().as_str()], |row| {
             let id: i64 = row.get(0)?;
             Ok(id)
         })?;
@@ -252,7 +252,7 @@ impl Database {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tomsg_name FROM rooms WHERE tomsg_name = ?1")?;
-        let room_id = stmt.query_row(params![room.get_external().as_str()], |row| {
+        let room_id = stmt.query_row(params![room.as_external().as_str()], |row| {
             let id: i64 = row.get(0)?;
             Ok(id)
         })?;
@@ -338,7 +338,7 @@ impl Database {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tomsg_name FROM rooms WHERE tomsg_name = ?1")?;
-        let room_id = stmt.query_row(params![room.get_external().as_str()], |row| {
+        let room_id = stmt.query_row(params![room.as_external().as_str()], |row| {
             let id: i64 = row.get(0)?;
             Ok(id)
         })?;

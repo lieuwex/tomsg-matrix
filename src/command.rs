@@ -68,7 +68,7 @@ pub async fn handle_command(
 
             let room_id = state
                 .get_room(MappingId::Matrix(&room_id))
-                .map(|r| r.get_matrix().to_owned())
+                .map(|r| r.as_matrix().to_owned())
                 .or_else(|| state.get_managment_room(&sender_id))
                 .expect(&format!("room {} not found in state", room_id));
 

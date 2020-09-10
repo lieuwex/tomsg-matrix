@@ -22,8 +22,8 @@ impl Message {
             matrix_id,
             tomsg_id,
 
-            matrix_room_id: room.get_matrix().to_owned(),
-            tomsg_room_name: room.get_external().to_owned(),
+            matrix_room_id: room.as_matrix().to_owned(),
+            tomsg_room_name: room.as_external().to_owned(),
         }
     }
 }
@@ -32,14 +32,14 @@ impl Mappable for Message {
     type MatrixType = EventId;
     type ExternalType = Id;
 
-    fn get_matrix(&self) -> &EventId {
+    fn as_matrix(&self) -> &EventId {
         &self.matrix_id
     }
     fn into_matrix(self) -> Self::MatrixType {
         self.matrix_id
     }
 
-    fn get_external(&self) -> &Id {
+    fn as_external(&self) -> &Id {
         &self.tomsg_id
     }
     fn into_external(self) -> Self::ExternalType {

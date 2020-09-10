@@ -16,7 +16,6 @@ use futures::future::{select, AbortHandle, Abortable, Either};
 use futures::stream::StreamExt;
 use futures_util::sink::SinkExt;
 
-use crate::matrix::{matrix_to_url, MatrixToItem};
 use crate::room::*;
 use crate::state::State;
 use crate::user::*;
@@ -44,7 +43,7 @@ use once_cell::sync::Lazy;
 
 use regex::Regex;
 
-use matrix_appservice_rs::{Mappable, MappingId};
+use matrix_appservice_rs::{Mappable, MappingId, MatrixToItem};
 
 static RE_MX_REPLY: Lazy<Regex> = Lazy::new(|| Regex::new(r"<mx-reply>.+?</mx-reply>").unwrap());
 
@@ -93,8 +92,8 @@ async fn get_puppet(msg: &Message, state: &mut State) -> std::result::Result<Roo
         Err(u) => {
             println!(
                 "puppet for {} not in room {}.",
-                u.get_external(),
-                room.get_matrix()
+                u.as_external(),
+                room.as_matrix()
             );
             Err(false)
         }
@@ -112,14 +111,14 @@ async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
         let reply = match earliest_id {
             None => ch
                 .send(Command::History(
-                    room.get_external().to_owned(),
+                    room.as_external().to_owned(),
                     NUM_HISTORY_PER_ITER,
                 ))
                 .await
                 .unwrap(),
             Some(id) => ch
                 .send(Command::HistoryBefore(
-                    room.get_external().to_owned(),
+                    room.as_external().to_owned(),
                     NUM_HISTORY_PER_ITER,
                     id,
                 ))
@@ -148,8 +147,8 @@ async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
 
     eprintln!(
         "retrieved history for room {} ({}): {:?}",
-        room.get_matrix(),
-        room.get_external(),
+        room.as_matrix(),
+        room.as_external(),
         res
     );
     res
@@ -186,7 +185,7 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
                 // create a random (hopefuly invalid) ID.
                 // TODO: actually fetch the message from the tomsg server.
                 None => EventId::new(&get_matrix_client().server_name()),
-                Some(msg) => msg.get_matrix().to_owned(),
+                Some(msg) => msg.as_matrix().to_owned(),
             };
             Some(event_id)
         }
@@ -196,7 +195,7 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
         None => None,
         Some(event_id) => {
             get_matrix_client()
-                .get_room_event(room.get_matrix().to_owned(), event_id)
+                .get_room_event(room.as_matrix(), &event_id)
                 .await
         }
     };
@@ -235,8 +234,8 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
 
                     let body = format!(
                         "<mx-reply><blockquote><a href=\"{}\">In reply to</a> <a href=\"{}\">{}</a><br>{}</blockquote></mx-reply>{}",
-                        matrix_to_url(MatrixToItem::Event(room.get_matrix(), &event_id)),
-                        matrix_to_url(MatrixToItem::User(&sender_id)),
+                        MatrixToItem::Event(room.as_matrix(), &event_id).as_url(),
+                        MatrixToItem::User(&sender_id).as_url(),
                         sender_id.to_string(),
                         RE_MX_REPLY.replace(&formatted_body, ""),
                         html_escape::encode_safe(&body),
@@ -260,7 +259,7 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
 
     let matrix_id = get_matrix_client()
         .create_message(
-            room.get_matrix(),
+            room.as_matrix(),
             &puppet,
             message_data,
             msg.timestamp
@@ -334,7 +333,7 @@ impl ConnectionShed {
 
     /// connects and stay connected
     pub async fn ensure_connection(&mut self, user: &ManagedUser) -> Result<Channel> {
-        if let Some(ch) = self.get_channel(user.get_matrix()) {
+        if let Some(ch) = self.get_channel(user.as_matrix()) {
             return Ok(ch);
         }
 
@@ -343,7 +342,7 @@ impl ConnectionShed {
 
     /// binds the given matrix_id with the given tomsg_credentials.
     pub async fn bind(&mut self, user: ManagedUser) -> Result<Channel> {
-        let matrix_id = user.get_matrix().to_owned();
+        let matrix_id = user.as_matrix().to_owned();
         self.drop_connection(&matrix_id).await;
 
         let (abort_handle, abort_registration) = AbortHandle::new_pair();
@@ -516,7 +515,7 @@ async fn bind(
                 .lock()
                 .await
                 .users
-                .has(MappingId::External(user.get_external()))
+                .has(MappingId::External(user.as_external()))
     );
 
     let (creds, matrix_id) = match &user.0 {
@@ -559,8 +558,8 @@ async fn bind(
                 room.insert_user(&db, &user).0
             };
 
-            let room_tomsg_name = room.get_external().to_owned();
-            let room_matrix_id = room.get_matrix().to_owned();
+            let room_tomsg_name = room.as_external().to_owned();
+            let room_matrix_id = room.as_matrix().to_owned();
 
             get_matrix_client()
                 .invite_tomsg_members(&mut state, room_tomsg_name, &room_matrix_id, &mut ch)
@@ -596,8 +595,8 @@ async fn bind(
                 None => {
                     eprintln!(
                         "tomsg connection for {} ({}) has been closed, reason: {:?}. We're returning from the bind() function",
-                        user.get_external(),
-                        user.get_matrix(),
+                        user.as_external(),
+                        user.as_matrix(),
                         conn_cloned.close_reason().await,
                     );
                     return;
@@ -651,14 +650,14 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
                 None => (*get_appservice_sendable_user()).to_owned(),
             };
 
-            let tomsg_name = room.get_external().to_owned();
-            let matrix_id = room.get_matrix().to_owned();
+            let tomsg_name = room.as_external().to_owned();
+            let matrix_id = room.as_matrix().to_owned();
 
             get_matrix_client()
                 .invite_tomsg_members(&mut state, tomsg_name, &matrix_id, conn)
                 .await;
 
-            let invited = user.get_matrix();
+            let invited = user.as_matrix();
 
             get_matrix_client()
                 .invite_matrix_user(&matrix_id, &inviter, invited)

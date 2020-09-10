@@ -58,7 +58,7 @@ impl Mappable for User {
     type MatrixType = UserId;
     type ExternalType = Word;
 
-    fn get_matrix(&self) -> &UserId {
+    fn as_matrix(&self) -> &UserId {
         match self {
             User::Real { matrix_id, .. } => matrix_id,
             User::Puppet { matrix_id, .. } => matrix_id,
@@ -71,7 +71,7 @@ impl Mappable for User {
         }
     }
 
-    fn get_external(&self) -> &Word {
+    fn as_external(&self) -> &Word {
         match self {
             User::Real {
                 tomsg_credentials, ..
@@ -96,15 +96,15 @@ impl Mappable for ManagedUser {
     type MatrixType = UserId;
     type ExternalType = Word;
 
-    fn get_matrix(&self) -> &UserId {
-        self.0.get_matrix()
+    fn as_matrix(&self) -> &UserId {
+        self.0.as_matrix()
     }
     fn into_matrix(self) -> Self::MatrixType {
         self.0.into_matrix()
     }
 
-    fn get_external(&self) -> &Word {
-        self.0.get_external()
+    fn as_external(&self) -> &Word {
+        self.0.as_external()
     }
     fn into_external(self) -> Self::ExternalType {
         self.0.into_external()
@@ -118,9 +118,9 @@ pub enum SendableUser {
 }
 
 impl SendableUser {
-    pub fn get_matrix(&self) -> &UserId {
+    pub fn as_matrix(&self) -> &UserId {
         match self {
-            SendableUser::RoomUser(u) => u.get_matrix(),
+            SendableUser::RoomUser(u) => u.as_matrix(),
             SendableUser::AppService(u) => u,
         }
     }

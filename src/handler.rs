@@ -7,19 +7,16 @@ use tomsg_rs::command::Command;
 use tomsg_rs::id::Id;
 use tomsg_rs::line::Line;
 use tomsg_rs::reply::*;
-use tomsg_rs::word::Word;
 
 use crate::command::handle_command;
 use crate::db::Database;
-use crate::matrix::mxc_to_url;
 use crate::room::{Room, RoomUser};
 use crate::state::State;
 use crate::tomsg::{Channel, ConnectionShed};
 use crate::user::ManagedUser;
 use crate::{get_local_part, get_matrix_client, get_state, TOMSG_CONN_SHED};
 
-use matrix_appservice_rs::serve;
-use matrix_appservice_rs::{Mappable, MappingId};
+use matrix_appservice_rs::{mxc_to_url, serve, Mappable, MappingId};
 
 use ruma::events::room::member::MembershipState;
 use ruma::events::room::message::{MessageEventContent, RelatesTo};
@@ -29,18 +26,24 @@ use ruma::identifiers::RoomId;
 use ruma::identifiers::UserId;
 use ruma::Raw;
 
-async fn send_message_tomsg(
-    ch: &mut Channel,
-    sender: &RoomUser,
-    tomsg_room_name: Word,
+struct TomsgSendInfo<'a> {
+    db: &'a Arc<Mutex<Database>>,
+    ch: &'a mut Channel,
+    room: &'a mut Room,
+    sender: &'a RoomUser,
     line: Line,
     reply_to: Option<Id>,
-    event_id: EventId,
-    db: &Arc<Mutex<Database>>,
-    room: &mut Room,
-) {
-    let res = ch
-        .send(Command::Send(tomsg_room_name, reply_to, line.clone()))
+    matrix_event_id: EventId,
+}
+
+async fn send_message_tomsg(info: TomsgSendInfo<'_>) {
+    let res = info
+        .ch
+        .send(Command::Send(
+            info.room.as_external().to_owned(),
+            info.reply_to,
+            info.line.clone(),
+        ))
         .await
         .unwrap();
     let tomsg_message_id = match res {
@@ -50,16 +53,17 @@ async fn send_message_tomsg(
 
     eprintln!(
         "[{} ({})] {} -> {} '{}'",
-        sender.get_matrix(),
-        sender.get_external(),
-        event_id,
+        info.sender.as_matrix(),
+        info.sender.as_external(),
+        info.matrix_event_id,
         tomsg_message_id,
-        line
+        info.line
     );
 
     {
-        let db = db.lock().unwrap();
-        room.handle_message(&db, &tomsg_message_id, event_id);
+        let db = info.db.lock().unwrap();
+        info.room
+            .handle_message(&db, &tomsg_message_id, info.matrix_event_id);
     }
 }
 
@@ -102,7 +106,7 @@ async fn invite_user(
     {
         let room = state.rooms.get_mut(MappingId::Matrix(room_id)).unwrap();
         // invite the tomsg user in the room, and store that
-        room.ensure_tomsg_user_in_room(&db, &mut conn, invited_user.get_external().to_owned())
+        room.ensure_tomsg_user_in_room(&db, &mut conn, invited_user.as_external().to_owned())
             .await;
 
         {
@@ -119,7 +123,7 @@ async fn invite_user(
 
 fn get_reply_to(event_id: &EventId, room: &Room) -> Option<Id> {
     room.get_handled_message(MappingId::Matrix(event_id))
-        .map(|msg| msg.get_external().to_owned())
+        .map(|msg| msg.as_external().to_owned())
 }
 
 async fn get_room_user(
@@ -331,16 +335,15 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
                 };
                 let line = Line::try_from(line).unwrap();
 
-                send_message_tomsg(
-                    &mut conn,
-                    &user,
-                    room.get_external().to_owned(),
-                    line,
-                    reply_to,
-                    event_id.to_owned(),
-                    info.db,
-                    room,
-                )
+                send_message_tomsg(TomsgSendInfo {
+                    db: info.db,
+                    ch: &mut conn,
+                    room: room,
+                    sender: &user,
+                    line: line,
+                    reply_to: reply_to,
+                    matrix_event_id: event_id.to_owned(),
+                })
                 .await;
 
                 // we only want the first message to reply
@@ -378,19 +381,20 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
 
             let url: http::Uri = url.parse().unwrap();
 
-            let line = mxc_to_url(get_matrix_client(), &url);
+            let line = mxc_to_url(get_matrix_client().homeserver_url(), &url)
+                .unwrap()
+                .to_string();
             let line = Line::try_from(line).unwrap();
 
-            send_message_tomsg(
-                &mut conn,
-                &user,
-                room.get_external().to_owned(),
-                line,
-                None,
-                event_id.to_owned(),
-                info.db,
-                room,
-            )
+            send_message_tomsg(TomsgSendInfo {
+                db: info.db,
+                ch: &mut conn,
+                room: room,
+                sender: &user,
+                line: line,
+                reply_to: None,
+                matrix_event_id: event_id.to_owned(),
+            })
             .await;
         };};
     }
