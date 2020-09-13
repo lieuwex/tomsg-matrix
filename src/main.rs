@@ -3,6 +3,7 @@ mod db;
 mod handler;
 mod matrix;
 mod message;
+mod migration;
 mod room;
 mod state;
 mod tomsg;
@@ -29,6 +30,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use self::db::*;
 use self::handler::listen;
 use self::matrix::*;
+use self::migration::run_migrations;
 use self::state::State;
 use self::tomsg::ConnectionShed;
 use self::user::*;
@@ -195,6 +197,12 @@ async fn main() {
         .next()
         .unwrap();
     okky!(TOMSG_IP.set(ip));
+
+    {
+        let state = get_state().lock().await;
+        let db = state.db.lock().unwrap();
+        run_migrations(&db).await.unwrap();
+    }
 
     {
         let state = get_state().lock().await;
