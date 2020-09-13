@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use tomsg_rs::command::Command;
 use tomsg_rs::id::Id;
 use tomsg_rs::line::Line;
-use tomsg_rs::reply::*;
 
 use crate::command::handle_command;
 use crate::db::Database;
@@ -46,10 +45,8 @@ async fn send_message_tomsg(info: TomsgSendInfo<'_>) {
         ))
         .await
         .unwrap();
-    let tomsg_message_id = match res {
-        Reply::Number(n) => Id::try_from(n).expect("expected Id"),
-        _ => panic!("expected number"),
-    };
+    let tomsg_message_id = res.number().expect("expected number");
+    let tomsg_message_id = Id::try_from(tomsg_message_id).expect("expected Id");
 
     eprintln!(
         "[{} ({})] {} -> {} '{}'",

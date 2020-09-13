@@ -125,10 +125,7 @@ async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
                 .await
                 .unwrap(),
         };
-        let messages = match reply {
-            Reply::History(msgs) => msgs,
-            _ => panic!(),
-        };
+        let messages = reply.history().unwrap();
 
         if let Some(msg) = messages.first() {
             earliest_id = Some(msg.id);
@@ -543,10 +540,7 @@ async fn bind(
     }
 
     // make sure the puppet is invited to all the rooms, and the rooms exist.
-    let rooms = match ch.send(Command::Listrooms).await? {
-        Reply::List(rooms) => rooms,
-        _ => panic!(),
-    };
+    let rooms = ch.send(Command::ListRooms).await?.list().unwrap();
     {
         let mut state = get_state().lock().await;
         let db = state.db.clone();

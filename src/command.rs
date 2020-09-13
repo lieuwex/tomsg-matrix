@@ -15,7 +15,6 @@ use tokio::time;
 
 use tomsg_rs::command::Command;
 use tomsg_rs::line::Line;
-use tomsg_rs::reply::*;
 use tomsg_rs::word::Word;
 
 use matrix_appservice_rs::{Mappable, MappingId};
@@ -185,10 +184,7 @@ pub async fn handle_command(
                 },
                 None => {
                     let res = tomsg_conn.send(Command::CreateRoom).await.unwrap();
-                    match res {
-                        Reply::Name(n) => n,
-                        _ => panic!("expected name"),
-                    }
+                    res.name().unwrap()
                 }
             };
 

@@ -27,7 +27,6 @@ use ruma_client::Error;
 use ruma_client::{Client, HttpsClient, Session};
 
 use tomsg_rs::command::Command;
-use tomsg_rs::reply::*;
 use tomsg_rs::word::Word;
 
 pub struct MatrixClient {
@@ -188,10 +187,7 @@ impl MatrixClient {
             .send(Command::ListMembers(room_tomsg_name.clone()))
             .await
             .unwrap();
-        let members = match res {
-            Reply::List(members) => members,
-            _ => panic!(),
-        };
+        let members = res.list().unwrap();
 
         let mut res = vec![];
         for member in members {
