@@ -469,6 +469,12 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
                     if !info.state.rooms.has(MappingId::Matrix(&room_id)) {
                         return;
                     }
+                    if let Some(user) = info.state.get_user(MappingId::Matrix(&state_key)) {
+                        if user.is_puppet() {
+                            eprintln!("ignorning join because it is from a puppet");
+                            return;
+                        }
+                    }
 
                     let mut shed = TOMSG_CONN_SHED.lock().await;
 
