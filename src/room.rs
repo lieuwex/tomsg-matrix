@@ -11,9 +11,7 @@ use ruma::identifiers::EventId;
 use ruma::identifiers::RoomId;
 use ruma::identifiers::UserId;
 
-use tomsg_rs::command::Command;
-use tomsg_rs::id::Id;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Command, Id, Word};
 
 use shrinkwraprs::Shrinkwrap;
 
@@ -42,8 +40,7 @@ pub struct Room {
 
     pub handled_messages: MappingDict<Message>,
 
-    pub tomsg_invited_or_joined: HashSet<Word>,
-    pub matrix_invited_or_joined: HashSet<UserId>,
+    pub participants: HashSet<(UserId, Word)>,
 }
 
 impl Room {
@@ -55,8 +52,7 @@ impl Room {
 
             handled_messages: MappingDict::new(),
 
-            tomsg_invited_or_joined: HashSet::new(),
-            matrix_invited_or_joined: HashSet::new(),
+            participants: HashSet::new(),
         }
     }
 
@@ -82,59 +78,44 @@ impl Room {
         true
     }
 
-    fn insert_matrix_user(&mut self, db: &Database, user: UserId) -> bool {
-        if !self.matrix_invited_or_joined.insert(user.clone()) {
-            return false;
-        }
-
-        db.insert_room_member(&self, MappingId::Matrix(&user))
-            .unwrap();
-
-        true
-    }
-
-    fn insert_tomsg_user(&mut self, db: &Database, user: Word) -> bool {
-        if !self.tomsg_invited_or_joined.insert(user.clone()) {
-            return false;
-        }
-
-        db.insert_room_member(&self, MappingId::External(&user))
-            .unwrap();
-
-        true
-    }
-
-    /// Insert the given `ManagedUser` into this room, both as tomsg user and as matrix user.
+    /// Insert the given `ManagedUser` into this room.
     /// Callers should be sure the user is managed in both directions before calling this function.
     ///
-    /// The return value indicates whether or not the room was insert into respectivally the matrix
-    /// user list and the tomsg user list.
-    pub fn insert_user(&mut self, db: &Database, user: &ManagedUser) -> (bool, bool) {
-        (
-            self.insert_matrix_user(db, user.as_matrix().clone()),
-            self.insert_tomsg_user(db, user.as_external().clone()),
-        )
+    /// The return value indicates whether or not the user was inserted.
+    pub fn insert_user(&mut self, db: &Database, user: &ManagedUser) -> bool {
+        if !self.participants.insert(user.clone().split()) {
+            return false;
+        }
+
+        db.insert_room_member(&self, user).unwrap();
+
+        true
     }
 
     /// Makes sure that the given `username` is in the room.
     /// If they are not in the room, invite them using the `invited_conn` and insert it into the
     /// given `db`.
     ///
+    /// The caller must make sure that the person is already in the room as a matrix user.
+    ///
     /// The return value indicates whether or not the user was inserted.
     pub async fn ensure_tomsg_user_in_room(
         &mut self,
         db: &Arc<Mutex<Database>>,
         inviter_conn: &mut tomsg::Channel,
-        username: Word,
+        user: &ManagedUser,
     ) -> bool {
         let inserted = {
             let db = db.lock().unwrap();
-            self.insert_tomsg_user(&db, username.clone())
+            self.insert_user(&db, user)
         };
 
         if inserted {
             inviter_conn
-                .send(Command::Invite(self.tomsg_name.clone(), username))
+                .send(Command::Invite {
+                    roomname: self.tomsg_name.clone(),
+                    username: user.as_external().to_owned(),
+                })
                 .await
                 .unwrap();
             true
@@ -146,8 +127,9 @@ impl Room {
     /// Returns whether or not the given user is doubly managed in the current room.
     /// This means that the user is both in the tomsg user list and the matrix user list.
     pub fn in_room(&self, user: &ManagedUser) -> bool {
-        self.tomsg_invited_or_joined.contains(user.as_external())
-            && self.matrix_invited_or_joined.contains(user.as_matrix())
+        self.participants
+            .iter()
+            .any(|(user_id, name)| user_id == user.as_matrix() && name == user.as_external())
     }
 
     /// Upgrades the given `ManagedUser` into a `RoomUser` iff the user is in the current room, in that
@@ -170,28 +152,30 @@ impl Room {
         client: &MatrixClient,
         conn: &mut tomsg::Channel,
         user: &ManagedUser,
-    ) -> (bool, bool) {
-        let pair = {
+    ) -> bool {
+        let inserted = {
             let db = db.lock().unwrap();
             self.insert_user(&db, user)
         };
+        if !inserted {
+            return false;
+        }
 
-        if pair.0 && user.0.is_puppet() {
+        if user.0.is_puppet() {
             // REVIEW: is it correct that this is None?
             client
                 .puppet_join_room(user.as_matrix(), &self.matrix_id, None)
                 .await;
         }
-        if pair.1 {
-            conn.send(Command::Invite(
-                self.tomsg_name.clone(),
-                user.as_external().clone(),
-            ))
-            .await
-            .unwrap();
-        }
 
-        pair
+        conn.send(Command::Invite {
+            roomname: self.tomsg_name.clone(),
+            username: user.as_external().clone(),
+        })
+        .await
+        .unwrap();
+
+        true
     }
 
     pub async fn remove_user(
@@ -202,31 +186,39 @@ impl Room {
         leave_matrix: bool,
         leave_tomsg: bool,
     ) {
-        let (tomsg_joined, matrix_joined) = {
+        if !user.check_room(&self.matrix_id) {
+            eprintln!(
+                "[remove_user] user {} not in room {}",
+                user.as_matrix(),
+                self.matrix_id
+            );
+            return;
+        }
+
+        let removed = {
             let db = db.lock().unwrap();
 
-            let tomsg_name = user.as_external();
-            let tomsg_joined = self.tomsg_invited_or_joined.remove(tomsg_name);
-            if tomsg_joined {
-                db.remove_room_member(&self, MappingId::External(tomsg_name))
-                    .unwrap();
-            }
+            let joined = self
+                .participants
+                .remove(&(user.as_matrix().to_owned(), user.as_external().to_owned()));
 
-            let matrix_id = user.as_matrix();
-            let matrix_joined = self.matrix_invited_or_joined.remove(matrix_id);
-            if matrix_joined {
-                db.remove_room_member(&self, MappingId::Matrix(matrix_id))
-                    .unwrap();
+            if joined {
+                db.remove_room_member(&self, &user.0).unwrap();
+                true
+            } else {
+                false
             }
-
-            (tomsg_joined, matrix_joined)
         };
 
-        if tomsg_joined && leave_tomsg {
+        if !removed {
+            return;
+        }
+
+        if leave_tomsg {
             eprintln!("leaving is not (yet) supported in tomsg, ignoring...");
         }
 
-        if matrix_joined && leave_matrix {
+        if leave_matrix {
             client.leave_room(user, &self).await;
         }
     }
@@ -248,5 +240,9 @@ impl Mappable for Room {
     }
     fn into_external(self) -> Word {
         self.tomsg_name
+    }
+
+    fn split(self) -> (Self::MatrixType, Self::ExternalType) {
+        (self.matrix_id, self.tomsg_name)
     }
 }

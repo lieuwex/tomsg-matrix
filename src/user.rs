@@ -7,19 +7,18 @@ use ruma_client::Error;
 
 use shrinkwraprs::Shrinkwrap;
 
-use tomsg_rs::line::Line;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Line, Word};
 
 use matrix_appservice_rs::Mappable;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct TomsgCredentials {
     pub username: Word,
     pub password: Line,
     pub auto_generated: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum User {
     Real {
         tomsg_credentials: TomsgCredentials,
@@ -87,9 +86,22 @@ impl Mappable for User {
             User::Puppet { tomsg_name, .. } => tomsg_name,
         }
     }
+
+    fn split(self) -> (Self::MatrixType, Self::ExternalType) {
+        match self {
+            User::Real {
+                matrix_id,
+                tomsg_credentials,
+            } => (matrix_id, tomsg_credentials.username),
+            User::Puppet {
+                matrix_id,
+                tomsg_name,
+            } => (matrix_id, tomsg_name),
+        }
+    }
 }
 
-#[derive(Shrinkwrap, Debug, Clone)]
+#[derive(Shrinkwrap, Debug, Clone, Hash, PartialEq, Eq)]
 pub struct ManagedUser(pub User);
 
 impl Mappable for ManagedUser {
@@ -108,6 +120,10 @@ impl Mappable for ManagedUser {
     }
     fn into_external(self) -> Self::ExternalType {
         self.0.into_external()
+    }
+
+    fn split(self) -> (Self::MatrixType, Self::ExternalType) {
+        self.0.split()
     }
 }
 

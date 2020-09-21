@@ -3,7 +3,7 @@ use std::io;
 use std::pin::Pin;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, RwLock,
 };
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -21,14 +21,8 @@ use crate::state::State;
 use crate::user::*;
 use crate::{get_appservice_sendable_user, get_matrix_client, get_state, TOMSG_IP};
 
-use tomsg_rs::command::Command;
 use tomsg_rs::connection::*;
-use tomsg_rs::id::Id;
-use tomsg_rs::line::Line;
-use tomsg_rs::message::Message;
-use tomsg_rs::pushmessage::*;
-use tomsg_rs::reply::*;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Command, Id, Line, Message, PushMessage, Reply, Word};
 
 use ruma::events::room::message::{
     FormattedBody, InReplyTo, MessageEvent, MessageEventContent, MessageFormat, RelatesTo,
@@ -43,6 +37,7 @@ use once_cell::sync::Lazy;
 
 use regex::Regex;
 
+use matrix_appservice_rs::convert::to_matrix;
 use matrix_appservice_rs::{Mappable, MappingId, MatrixToItem};
 
 static RE_MX_REPLY: Lazy<Regex> = Lazy::new(|| Regex::new(r"<mx-reply>.+?</mx-reply>").unwrap());
@@ -110,18 +105,18 @@ async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
     while get_history {
         let reply = match earliest_id {
             None => ch
-                .send(Command::History(
-                    room.as_external().to_owned(),
-                    NUM_HISTORY_PER_ITER,
-                ))
+                .send(Command::History {
+                    roomname: room.as_external().to_owned(),
+                    count: NUM_HISTORY_PER_ITER,
+                })
                 .await
                 .unwrap(),
             Some(id) => ch
-                .send(Command::HistoryBefore(
-                    room.as_external().to_owned(),
-                    NUM_HISTORY_PER_ITER,
-                    id,
-                ))
+                .send(Command::HistoryBefore {
+                    roomname: room.as_external().to_owned(),
+                    count: NUM_HISTORY_PER_ITER,
+                    message_id: id,
+                })
                 .await
                 .unwrap(),
         };
@@ -197,57 +192,67 @@ async fn handle_tomsg_message(state: &mut State, msg: Message) {
         }
     };
 
-    let formatted_body = match event {
-        None => None,
-        Some(event) => {
-            let event_id = reply_event_id.clone().unwrap();
-
-            let event: Option<AnyRoomEvent> = match event.deserialize() {
-                Err(_) => None,
-                Ok(event) => Some(event),
-            };
-            let event: Option<MessageEvent> = match event {
-                None => None,
-                Some(AnyRoomEvent::Message(AnyMessageEvent::RoomMessage(event))) => Some(event),
-                Some(unknown) => {
-                    eprintln!("we got {:?} instead of MessageEvent, giving None", unknown);
-                    None
+    let formatted_body = {
+        let event: Option<MessageEvent> = match event {
+            None => None,
+            Some(event) => {
+                let event: Option<AnyRoomEvent> = match event.deserialize() {
+                    Err(_) => None,
+                    Ok(event) => Some(event),
+                };
+                match event {
+                    None => None,
+                    Some(AnyRoomEvent::Message(AnyMessageEvent::RoomMessage(event))) => Some(event),
+                    Some(unknown) => {
+                        eprintln!("we got {:?} instead of MessageEvent, giving None", unknown);
+                        None
+                    }
                 }
-            };
+            }
+        };
 
-            match event {
-                None => None,
-                Some(event) => {
-                    let formatted_body: String = match event.content {
-                        MessageEventContent::Text(c) => {
-                            c.formatted.map(|f| f.body).unwrap_or(c.body)
-                        }
-                        unknown => {
-                            eprintln!("don't know how to handle {:?}", unknown);
-                            "Sent something".to_string()
-                        }
-                    };
-                    let sender_id: UserId = event.sender;
+        let body = {
+            let map: HashMap<_, _> = room
+                .participants
+                .iter()
+                .map(|(user_id, name)| (name.to_string(), MatrixToItem::User(user_id)))
+                .collect();
 
-                    let body = format!(
-                        "<mx-reply><blockquote><a href=\"{}\">In reply to</a> <a href=\"{}\">{}</a><br>{}</blockquote></mx-reply>{}",
-                        MatrixToItem::Event(room.as_matrix(), &event_id).as_url(),
-                        MatrixToItem::User(&sender_id).as_url(),
-                        sender_id.to_string(),
-                        RE_MX_REPLY.replace(&formatted_body, ""),
-                        html_escape::encode_safe(&body),
-                    );
-                    Some(body)
-                }
+            let info = to_matrix::Info { map };
+
+            let encoded = html_escape::encode_safe(&body);
+            to_matrix::convert(encoded.to_string(), &info)
+        };
+
+        match event {
+            None => body,
+            Some(event) => {
+                let formatted_body: String = match event.content {
+                    MessageEventContent::Text(c) => c.formatted.map(|f| f.body).unwrap_or(c.body),
+                    unknown => {
+                        eprintln!("don't know how to handle {:?}", unknown);
+                        "Sent something".to_string()
+                    }
+                };
+                let sender_id: UserId = event.sender;
+
+                format!(
+                    "<mx-reply><blockquote><a href=\"{}\">In reply to</a> <a href=\"{}\">{}</a><br>{}</blockquote></mx-reply>{}",
+                    MatrixToItem::Event(room.as_matrix(), &event.event_id).to_url_string(),
+                    MatrixToItem::User(&sender_id).to_url_string(),
+                    sender_id.to_string(),
+                    RE_MX_REPLY.replace(&formatted_body, ""),
+                    body,
+                )
             }
         }
     };
 
     let message_data = MessageEventContent::Text(TextMessageEventContent {
         body,
-        formatted: formatted_body.map(|body| FormattedBody {
+        formatted: Some(FormattedBody {
             format: MessageFormat::Html,
-            body,
+            body: formatted_body,
         }),
         relates_to: reply_event_id.map(|event_id| RelatesTo {
             in_reply_to: Some(InReplyTo { event_id }),
@@ -279,6 +284,9 @@ type Receiver = mpsc::Receiver<Pair>;
 
 #[derive(Clone)]
 pub struct Channel {
+    // debug
+    pub tag: Arc<RwLock<String>>,
+
     ch: Sender,
     // TODO: actually use this
     is_connecting: Arc<AtomicBool>,
@@ -286,6 +294,11 @@ pub struct Channel {
 
 impl Channel {
     pub async fn send(&mut self, msg: Command) -> Result<Reply> {
+        {
+            let tag = self.tag.read().unwrap();
+            println!("[tomsg] {} command: {:?}", tag, msg);
+        }
+
         let (sender, receiver) = oneshot::channel();
 
         if let Err(e) = self.ch.send((msg, sender)).await {
@@ -346,6 +359,7 @@ impl ConnectionShed {
         let (sender, mut receiver): (Sender, Receiver) = mpsc::channel(0);
 
         let ch = Channel {
+            tag: Arc::new(RwLock::new("".to_string())),
             ch: sender,
             is_connecting: Arc::new(AtomicBool::new(true)),
         };
@@ -485,7 +499,10 @@ pub async fn register(
     auto_generated: bool,
 ) -> std::result::Result<TomsgCredentials, RegisterError> {
     let res = conn
-        .send_command(Command::Register(username.clone(), password.clone()))
+        .send_command(Command::Register {
+            username: username.clone(),
+            password: password.clone(),
+        })
         .await?
         .map_err(|_| io::Error::new(io::ErrorKind::ConnectionAborted, "connection reset"))?;
 
@@ -524,16 +541,19 @@ async fn bind(
     };
 
     match ch
-        .send(Command::Login(creds.username, creds.password))
+        .send(Command::Login {
+            username: creds.username.clone(),
+            password: creds.password,
+        })
         .await?
     {
-        Reply::Ok => {}
+        Reply::Ok => *ch.tag.write().unwrap() = creds.username.to_string(),
         Reply::Error(err) => {
             // TODO: actually recover from this in some way. We should at least send an error in
             // the management room, or create one and send it there if it doesn't exist.
             panic!(format!(
-                "got error while logging in: {}.  Throwing a panic.",
-                err
+                "got error while logging in ({}): {}.  Throwing a panic.",
+                creds.username, err
             ));
         }
         _ => panic!("expected Ok or Err"),
@@ -549,7 +569,7 @@ async fn bind(
             let room = get_or_make_plumbed_room!(&mut state, tomsg_name.clone());
             let should_invite = {
                 let db = db.lock().unwrap();
-                room.insert_user(&db, &user).0
+                room.insert_user(&db, &user)
             };
 
             let room_tomsg_name = room.as_external().to_owned();
@@ -625,7 +645,7 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
             handle_tomsg_message(&mut state, msg).await;
         }
 
-        PushMessage::Invite(roomname, inviter) => {
+        PushMessage::Invite { roomname, inviter } => {
             println!("a {} {}", roomname, inviter);
             let mut state = get_state().lock().await;
             println!("b {} {}", roomname, inviter);
@@ -658,27 +678,29 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
                 .await;
         }
 
-        PushMessage::Join(room_name, user_name) => {
+        PushMessage::Join { roomname, username } => {
             let mut state = get_state().lock().await;
             let db = state.db.clone();
 
-            let user = match state.ensure_puppet(&get_matrix_client(), &user_name).await {
+            let user = match state.ensure_puppet(&get_matrix_client(), &username).await {
                 None => {
                     eprintln!(
                         "we already got a real user for tomsg user {}. Ignoring Join.",
-                        user_name
+                        username
                     );
                     return Ok(());
                 }
                 Some(u) => u,
             };
-            let room = get_or_make_plumbed_room!(&mut state, room_name.clone());
+            let room = get_or_make_plumbed_room!(&mut state, roomname.clone());
 
             room.insert_and_invite(&db, &get_matrix_client(), conn, &user)
                 .await;
         }
 
-        PushMessage::Online(_active, _user) => println!("todo pushmessage online"),
+        PushMessage::Online { sessions, username } => {
+            println!("todo pushmessage online ({} {})", sessions, username)
+        }
     }
 
     Ok(())

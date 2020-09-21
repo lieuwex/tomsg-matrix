@@ -2,8 +2,7 @@ use crate::room::Room;
 
 use ruma::identifiers::{EventId, RoomId};
 
-use tomsg_rs::id::Id;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Id, Word};
 
 use matrix_appservice_rs::Mappable;
 
@@ -44,5 +43,9 @@ impl Mappable for Message {
     }
     fn into_external(self) -> Self::ExternalType {
         self.tomsg_id
+    }
+
+    fn split(self) -> (Self::MatrixType, Self::ExternalType) {
+        (self.matrix_id, self.tomsg_id)
     }
 }

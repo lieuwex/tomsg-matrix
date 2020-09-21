@@ -166,16 +166,20 @@ async fn main() {
     let db = Arc::new(std::sync::Mutex::new(
         Database::new("./db.db".to_string()).unwrap(),
     ));
-    okky!(STATE.set(Arc::new(Mutex::new(State::from_db(db.clone()).await))));
+
     okky!(MATRIX_CLIENT.set(
         MatrixClient::new(
             service.server_name().try_into().unwrap(),
             service.server_url().clone(),
             registration.as_token.clone(),
-            db,
+            db.clone(),
         )
         .await,
     ));
+
+    run_migrations(db.clone()).await.unwrap();
+
+    okky!(STATE.set(Arc::new(Mutex::new(State::from_db(db).await))));
 
     okky!(APPSERVICE_SENDABLE_USER.set({
         let sender = UserId::parse_with_server_name(
@@ -197,12 +201,6 @@ async fn main() {
         .next()
         .unwrap();
     okky!(TOMSG_IP.set(ip));
-
-    {
-        let state = get_state().lock().await;
-        let db = state.db.lock().unwrap();
-        run_migrations(&db).await.unwrap();
-    }
 
     {
         let state = get_state().lock().await;

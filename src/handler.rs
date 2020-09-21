@@ -3,9 +3,7 @@ use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use tomsg_rs::command::Command;
-use tomsg_rs::id::Id;
-use tomsg_rs::line::Line;
+use tomsg_rs::{Command, Id, Line};
 
 use crate::command::handle_command;
 use crate::db::Database;
@@ -15,12 +13,14 @@ use crate::tomsg::{Channel, ConnectionShed};
 use crate::user::ManagedUser;
 use crate::{get_local_part, get_matrix_client, get_state, TOMSG_CONN_SHED};
 
+use matrix_appservice_rs::convert::to_external;
 use matrix_appservice_rs::{mxc_to_url, serve, Mappable, MappingId};
 
 use ruma::events::room::member::MembershipState;
-use ruma::events::room::message::{MessageEventContent, RelatesTo};
+use ruma::events::room::message::{FormattedBody, MessageEventContent, MessageFormat, RelatesTo};
 use ruma::events::{AnyEvent, AnyMessageEvent, AnyStateEvent};
 use ruma::identifiers::EventId;
+use ruma::identifiers::RoomAliasId;
 use ruma::identifiers::RoomId;
 use ruma::identifiers::UserId;
 use ruma::Raw;
@@ -38,11 +38,11 @@ struct TomsgSendInfo<'a> {
 async fn send_message_tomsg(info: TomsgSendInfo<'_>) {
     let res = info
         .ch
-        .send(Command::Send(
-            info.room.as_external().to_owned(),
-            info.reply_to,
-            info.line.clone(),
-        ))
+        .send(Command::Send {
+            roomname: info.room.as_external().to_owned(),
+            reply_on: info.reply_to,
+            message: info.line.clone(),
+        })
         .await
         .unwrap();
     let tomsg_message_id = res.number().expect("expected number");
@@ -64,6 +64,69 @@ async fn send_message_tomsg(info: TomsgSendInfo<'_>) {
     }
 }
 
+fn format(body: &str, _: &State, room: &Room) -> String {
+    /*
+    let mut user_mapping = HashMap::new();
+    for (user_id, name) in &room.participants {
+        user_mapping.insert(user_id.to_owned(), name.to_string());
+    }
+
+    let mut room_mapping = HashMap::new();
+    for room in &state.rooms {
+        // HACK
+        let room_alias = format!("#tomsg_{}:lieuwe.xyz", room.as_external());
+        let room_alias = RoomAliasId::try_from(room_alias).unwrap();
+        room_mapping.insert(room_alias, room.as_external().to_string());
+    }
+    */
+
+    use to_external::{stringify_children, Element, Info};
+
+    let mut info = Info::new();
+
+    info.add_element_handler("mx-reply".to_string(), &|_: Element, _: &Info| {
+        String::new()
+    });
+
+    info.add_element_handler("em".to_string(), &|e: Element, i: &Info| {
+        let s = stringify_children(e, i);
+        format!("*{}*", s)
+    });
+
+    info.add_element_handler("strong".to_string(), &|e: Element, i: &Info| {
+        let s = stringify_children(e, i);
+        format!("**{}**", s)
+    });
+
+    info.add_element_handler("blockquote".to_string(), &|e: Element, i: &Info| {
+        let s = stringify_children(e, i);
+        format!("> {}", s.trim())
+    });
+
+    info.add_element_handler("code".to_string(), &|e: Element, i: &Info| {
+        let s = stringify_children(e, i);
+        format!("`{}`", s)
+    });
+
+    let f = |user_id: UserId, _: &to_external::Info| {
+        let p = room.participants.iter().find(|(uid, _)| uid == &user_id);
+        p.map(|(_, name)| name.to_string())
+    };
+    info.user_mapper(&f);
+
+    info.room_mapper(&|alias: RoomAliasId, _: &to_external::Info| Some(alias.to_string()));
+
+    let s = to_external::convert(body, &info);
+    let body = match s {
+        Ok(ref s) => s,
+        Err(err) => {
+            eprintln!("{}", err);
+            body
+        }
+    };
+    html_escape::decode_html_entities(&body).to_string()
+}
+
 /// invite the given user as another user.
 async fn invite_user(
     state: &mut State,
@@ -78,8 +141,8 @@ async fn invite_user(
         .expect("room not found");
 
     // get an user that is in the room and we manage as the inviter.
-    let inviter = room.matrix_invited_or_joined.iter().find_map(|user_id| {
-        let user = state.get_user(MappingId::Matrix(user_id))?;
+    let inviter = room.participants.iter().find_map(|(_, username)| {
+        let user = state.get_user(MappingId::External(username))?;
 
         if user.0.is_puppet() {
             // we need to have ownership over the tomsg connection, which only happens with real
@@ -103,16 +166,8 @@ async fn invite_user(
     {
         let room = state.rooms.get_mut(MappingId::Matrix(room_id)).unwrap();
         // invite the tomsg user in the room, and store that
-        room.ensure_tomsg_user_in_room(&db, &mut conn, invited_user.as_external().to_owned())
+        room.ensure_tomsg_user_in_room(&db, &mut conn, &invited_user)
             .await;
-
-        {
-            let db = db.lock().unwrap();
-
-            // make sure that the user is marked as managed in the room (actually only useful for the
-            // matrix side of things), this is a precondition for running this function.
-            room.insert_user(&db, &invited_user);
-        }
     }
 
     true
@@ -135,29 +190,35 @@ async fn get_room_user(
 
     let user = state.ensure_real_user(user_id, None).await;
 
-    let room = match state.rooms.get(room_mapping_id.clone()) {
-        None => {
-            println!("get_room_user: room not found");
-            return None;
-        }
-        Some(r) => r,
+    let user = {
+        let room = match state.rooms.get(room_mapping_id.clone()) {
+            None => {
+                println!("get_room_user: room not found");
+                return None;
+            }
+            Some(r) => r,
+        };
+
+        shed.ensure_connection(&user).await.unwrap();
+
+        room.to_room_user(user)
     };
 
-    shed.ensure_connection(&user).await.unwrap();
-    if !room.in_room(&user) {
-        // TODO: this should be enforced by typing system
-
-        let found = invite_user(state, shed, &db, room_id, &user).await;
-        if !found {
-            println!(
-                "no person in room which connection we can use for invite, ignoring message..."
-            );
-            return None;
+    match user {
+        Ok(user) => Some(user),
+        Err(user) => {
+            let found = invite_user(state, shed, &db, room_id, &user).await;
+            if found {
+                let room = state.rooms.get(room_mapping_id).unwrap();
+                room.to_room_user(user).ok()
+            } else {
+                println!(
+                    "no person in room which connection we can use for invite, ignoring message..."
+                );
+                None
+            }
         }
     }
-
-    let room = state.rooms.get_mut(room_mapping_id).unwrap();
-    room.to_room_user(user).ok()
 }
 
 fn is_puppet(info: &mut Info<'_>, user_id: &UserId) -> bool {
@@ -288,7 +349,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
         ($is_emote:expr, $body:expr, $formatted:expr, $relates_to:expr) => {{
             let is_emote: bool = $is_emote;
             let body: String = $body;
-            let _formatted = $formatted;
+            let formatted: Option<FormattedBody> = $formatted;
             let relates_to: Option<RelatesTo> = $relates_to;
 
             let (user, mut conn) = {
@@ -305,8 +366,16 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
             let room = info
                 .state
                 .rooms
-                .get_mut(room_mapping_id)
+                .get(room_mapping_id.clone())
                 .expect("room is not a management room, but is None");
+
+            let body = match formatted {
+                None => body,
+                Some(formatted) => match formatted.format {
+                    MessageFormat::Html => format(&formatted.body, &info.state, &room),
+                    _ => body,
+                },
+            };
 
             // TODO
 
@@ -314,6 +383,12 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
                 .and_then(|r: RelatesTo| r.in_reply_to)
                 .map(|r| r.event_id)
                 .and_then(|event_id| get_reply_to(&event_id, room));
+
+            let room = info
+                .state
+                .rooms
+                .get_mut(room_mapping_id)
+                .expect("room is not a management room, but is None");
 
             let mut trimming_reply = reply_to.is_some();
             for line in body.trim_end().lines() {
@@ -399,7 +474,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
     match event {
         AnyMessageEvent::RoomMessage(m) => match m.content {
             MessageEventContent::Text(e) => {
-                let items: Option<Vec<String>> = if is_management_room {
+                let command_items: Option<Vec<String>> = if is_management_room {
                     Some(e.body.split(' ').map(|v| v.to_string()).collect())
                 } else if e.body.starts_with("!tomsg") {
                     Some(e.body.split(' ').skip(1).map(|v| v.to_string()).collect())
@@ -407,8 +482,8 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
                     None
                 };
 
-                match items {
-                    Some(items) => {
+                match command_items {
+                    Some(command_items) => {
                         let mut shed = TOMSG_CONN_SHED.lock().await;
 
                         handle_command(
@@ -417,7 +492,7 @@ async fn handle_message_event(mut info: Info<'_>, event: AnyMessageEvent) {
                             &get_matrix_client(),
                             sender_id,
                             m.room_id,
-                            items,
+                            command_items,
                         )
                         .await;
                     }
@@ -448,10 +523,17 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
     match event {
         AnyStateEvent::RoomMember(e) => {
             let state_key = UserId::try_from(e.state_key).unwrap();
+            let state_key_is_appservice = state_key.localpart() == get_local_part();
 
             match e.content.membership {
                 MembershipState::Invite => {
-                    if state_key.localpart() != get_local_part() {
+                    if !state_key_is_appservice {
+                        eprintln!(
+                            "ignorning invite in {} from {} because it is not for appservice (but for {})",
+                            room_id,
+                            sender_id,
+                            state_key,
+                        );
                         return;
                     }
 
@@ -466,10 +548,16 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
                 MembershipState::Join => {
                     // state_key is the person that joined
 
-                    if !info.state.rooms.has(MappingId::Matrix(&room_id)) {
+                    if state_key_is_appservice {
+                        eprintln!(
+                            "ignorning join in {} from appservice ({})",
+                            room_id, state_key
+                        );
                         return;
-                    }
-                    if let Some(user) = info.state.get_user(MappingId::Matrix(&state_key)) {
+                    } else if !info.state.rooms.has(MappingId::Matrix(&room_id)) {
+                        eprintln!("ignorning join in {} because room is unmanaged", room_id);
+                        return;
+                    } else if let Some(user) = info.state.get_user(MappingId::Matrix(&state_key)) {
                         if user.is_puppet() {
                             eprintln!("ignorning join because it is from a puppet");
                             return;
@@ -487,7 +575,7 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
                 MembershipState::Leave => {
                     // state_key is the person that left
 
-                    if state_key.localpart() == "tomsgbot" {
+                    if state_key_is_appservice {
                         // TODO: disabled handling a leave of tomsgbot, have to figure this out
                         // when we got kicked by irc appservice.
                         // If this is enabled we also need to actually make the puppets leave the

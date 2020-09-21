@@ -11,11 +11,9 @@ use rusqlite::{params, Connection, Result};
 
 use ruma::identifiers::{EventId, RoomId, UserId};
 
-use tomsg_rs::id::Id;
-use tomsg_rs::line::Line;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Id, Line, Word};
 
-use matrix_appservice_rs::{Mappable, MappingDict, MappingId};
+use matrix_appservice_rs::{Mappable, MappingDict};
 
 pub struct Meta {
     pub schema_version: u64,
@@ -23,7 +21,7 @@ pub struct Meta {
 }
 
 pub struct Database {
-    conn: Connection,
+    pub conn: Connection,
 }
 
 impl Database {
@@ -44,32 +42,27 @@ impl Database {
         while let Some(row) = query.next().unwrap() {
             let room_id: i64 = row.get(0).unwrap();
 
-            let tomsg_members = {
+            let participants = {
                 let mut stmt = self
                     .conn
-                    .prepare("SELECT room_id, name FROM tomsg_room_join WHERE room_id = ?1")
+                    .prepare(
+                        "SELECT room_id, matrix_id, name FROM room_participants WHERE room_id = ?1",
+                    )
                     .unwrap();
-                let tomsg_members = stmt
-                    .query_map(params![room_id], |row| {
-                        let name: String = row.get(1).unwrap();
-                        Ok(Word::try_from(name).unwrap())
-                    })
-                    .unwrap();
-                HashSet::from_iter(tomsg_members.map(|v| v.unwrap()))
-            };
 
-            let matrix_members = {
-                let mut stmt = self
-                    .conn
-                    .prepare("SELECT room_id, matrix_id FROM matrix_room_join WHERE room_id = ?1")
-                    .unwrap();
-                let matrix_members = stmt
+                let participants = stmt
                     .query_map(params![room_id], |row| {
-                        let s: String = row.get(1).unwrap();
-                        Ok(UserId::try_from(s).unwrap())
+                        let matrix_id: String = row.get(1).unwrap();
+                        let matrix_id = UserId::try_from(matrix_id).unwrap();
+
+                        let name: String = row.get(2).unwrap();
+                        let name = Word::try_from(name).unwrap();
+
+                        Ok((matrix_id, name))
                     })
                     .unwrap();
-                HashSet::from_iter(matrix_members.map(|v| v.unwrap()))
+
+                HashSet::from_iter(participants.map(|v| v.unwrap()))
             };
 
             let tomsg_name: String = row.get(2).unwrap();
@@ -87,8 +80,7 @@ impl Database {
 
                 handled_messages: MappingDict::new(),
 
-                tomsg_invited_or_joined: tomsg_members,
-                matrix_invited_or_joined: matrix_members,
+                participants,
             };
 
             let handled_messages = {
@@ -216,7 +208,7 @@ impl Database {
         )?;
         Ok(())
     }
-    pub fn insert_room_member(&self, room: &Room, id: MappingId<Word, UserId>) -> Result<()> {
+    pub fn insert_room_member(&self, room: &Room, user: &ManagedUser) -> Result<()> {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tomsg_name FROM rooms WHERE tomsg_name = ?1")?;
@@ -225,20 +217,15 @@ impl Database {
             Ok(id)
         })?;
 
-        match id {
-            MappingId::External(name) => {
-                self.conn.execute(
-                    "INSERT INTO tomsg_room_join(room_id, name) VALUES(?1, ?2)",
-                    params![room_id, name.as_str()],
-                )?;
-            }
-            MappingId::Matrix(id) => {
-                self.conn.execute(
-                    "INSERT INTO matrix_room_join(room_id, matrix_id) VALUES(?1, ?2)",
-                    params![room_id, id.to_string()],
-                )?;
-            }
-        };
+        self.conn.execute(
+            "INSERT INTO room_participants(room_id, matrix_id, name) VALUES(?1, ?2)",
+            params![
+                room_id,
+                user.as_matrix().as_str(),
+                user.as_external().as_str()
+            ],
+        )?;
+
         Ok(())
     }
     pub fn remove_room(&self, tomsg_name: &Word) -> Result<()> {
@@ -248,7 +235,7 @@ impl Database {
         )?;
         Ok(())
     }
-    pub fn remove_room_member(&self, room: &Room, id: MappingId<Word, UserId>) -> Result<()> {
+    pub fn remove_room_member(&self, room: &Room, user: &ManagedUser) -> Result<()> {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tomsg_name FROM rooms WHERE tomsg_name = ?1")?;
@@ -257,20 +244,10 @@ impl Database {
             Ok(id)
         })?;
 
-        match id {
-            MappingId::External(name) => {
-                self.conn.execute(
-                    "DELETE FROM tomsg_room_join WHERE room_id = ?1 AND name = ?2",
-                    params![room_id, name.as_str()],
-                )?;
-            }
-            MappingId::Matrix(id) => {
-                self.conn.execute(
-                    "DELETE FROM matrix_room_join WHERE room_id = ?1 AND matrix_id = ?2",
-                    params![room_id, id.to_string()],
-                )?;
-            }
-        };
+        self.conn.execute(
+            "DELETE FROM room_participants WHERE room_id = ?1 AND name = ?2",
+            params![room_id, user.as_matrix().as_str()],
+        )?;
         Ok(())
     }
 

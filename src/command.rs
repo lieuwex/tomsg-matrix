@@ -13,9 +13,7 @@ use ruma::identifiers::{RoomId, UserId};
 use tokio::select;
 use tokio::time;
 
-use tomsg_rs::command::Command;
-use tomsg_rs::line::Line;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Command, Line, Word};
 
 use matrix_appservice_rs::{Mappable, MappingId};
 

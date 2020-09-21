@@ -9,11 +9,9 @@ use crate::tomsg::{connect, register, RegisterError};
 use crate::user::*;
 use crate::util::random_alphanumeric;
 
-use ruma::identifiers::RoomId;
-use ruma::identifiers::UserId;
+use ruma::identifiers::{RoomId, UserId};
 
-use tomsg_rs::line::Line;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Line, Word};
 
 use matrix_appservice_rs::{Mappable, MappingDict, MappingId};
 

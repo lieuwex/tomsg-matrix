@@ -26,8 +26,7 @@ use ruma::Raw;
 use ruma_client::Error;
 use ruma_client::{Client, HttpsClient, Session};
 
-use tomsg_rs::command::Command;
-use tomsg_rs::word::Word;
+use tomsg_rs::{Command, Word};
 
 pub struct MatrixClient {
     server_name: Box<ServerName>,
@@ -155,11 +154,7 @@ impl MatrixClient {
         inviter: &SendableUser,
         invited: &UserId,
     ) -> invite_user::Response {
-        let good = match inviter {
-            SendableUser::RoomUser(user) => user.check_room(room_id),
-            SendableUser::AppService(_) => true,
-        };
-        if !good {
+        if !inviter.can_send_to(room_id) {
             panic!("inviter RoomUser has different room_id");
         }
 
@@ -184,7 +179,9 @@ impl MatrixClient {
         tomsg_conn: &mut tomsg::Channel,
     ) -> Vec<UserId> {
         let res = tomsg_conn
-            .send(Command::ListMembers(room_tomsg_name.clone()))
+            .send(Command::ListMembers {
+                roomname: room_tomsg_name.clone(),
+            })
             .await
             .unwrap();
         let members = res.list().unwrap();
@@ -199,7 +196,7 @@ impl MatrixClient {
                 let room = state
                     .get_room(MappingId::External(&room_tomsg_name))
                     .unwrap();
-                if room.matrix_invited_or_joined.contains(&u.as_matrix()) {
+                if room.in_room(&u) {
                     continue;
                 }
             }
