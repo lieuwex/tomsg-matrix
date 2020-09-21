@@ -81,6 +81,8 @@ impl Database {
                 handled_messages: MappingDict::new(),
 
                 participants,
+
+                fetched_tomsg_history: false,
             };
 
             let handled_messages = {

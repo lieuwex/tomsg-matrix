@@ -41,6 +41,15 @@ pub struct Room {
     pub handled_messages: MappingDict<Message>,
 
     pub participants: HashSet<(UserId, Word)>,
+
+    /// Whether or not the tomsg history was fetched for this room.
+    /// Must start with `false` on every possible construction path of a new execution. Will
+    /// become `true` when the history has been fetched.
+    /// This is useful to make sure that only one history fetch is sent per room.
+    ///
+    /// Note: Only one history fetch is needed per room, since everybody in the room has
+    /// the same view of the room, not matter when the person joined.
+    pub fetched_tomsg_history: bool,
 }
 
 impl Room {
@@ -53,6 +62,8 @@ impl Room {
             handled_messages: MappingDict::new(),
 
             participants: HashSet::new(),
+
+            fetched_tomsg_history: false,
         }
     }
 

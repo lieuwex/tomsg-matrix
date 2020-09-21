@@ -96,7 +96,11 @@ async fn get_puppet(msg: &Message, state: &mut State) -> std::result::Result<Roo
 }
 
 /// retrieve history for the room, as much as is needed.
-async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
+pub async fn get_unhandled_history(ch: &mut Channel, room: &mut Room) -> Vec<Message> {
+    if room.fetched_tomsg_history {
+        return vec![];
+    }
+
     let mut res = vec![];
 
     let mut earliest_id: Option<Id> = None;
@@ -143,6 +147,9 @@ async fn get_unhandled_history(ch: &mut Channel, room: &Room) -> Vec<Message> {
         room.as_external(),
         res
     );
+
+    room.fetched_tomsg_history = true;
+
     res
 }
 
