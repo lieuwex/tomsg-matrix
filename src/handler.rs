@@ -530,21 +530,33 @@ async fn handle_state_event(info: Info<'_>, event: AnyStateEvent) {
 
             match e.content.membership {
                 MembershipState::Invite => {
-                    if !state_key_is_appservice {
-                        eprintln!(
-                            "ignorning invite in {} from {} because it is not for appservice (but for {})",
-                            room_id,
-                            sender_id,
-                            state_key,
-                        );
-                        return;
-                    }
+                    eprintln!(
+                        "got invite in {} from {} for {}",
+                        room_id, sender_id, state_key,
+                    );
 
                     get_matrix_client()
                         .puppet_join_room(&state_key, &room_id, None)
                         .await;
-                    if e.content.is_direct.unwrap_or(false) {
-                        info.state.set_management_room(sender_id, room_id);
+
+                    if state_key_is_appservice {
+                        if e.content.is_direct.unwrap_or(false) {
+                            info.state.set_management_room(sender_id, room_id);
+                        }
+                    } else {
+                        // invite tomsg user to room and add user as joined in the room (this is
+                        // valid, because the puppet has joined the matrix room just now)
+
+                        let invited = match info.state.get_user(MappingId::Matrix(&state_key)) {
+                            Some(i) if i.is_puppet() => i.to_owned(),
+                            _ => {
+                                eprintln!("user {} is not managed, or is not a puppet", state_key);
+                                return;
+                            }
+                        };
+
+                        let mut shed = TOMSG_CONN_SHED.lock().await;
+                        invite_user(info.state, &mut shed, info.db, &room_id, &invited).await;
                     }
                 }
 
