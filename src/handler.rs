@@ -163,11 +163,14 @@ async fn invite_user(
 
     let mut conn = shed.ensure_connection(&inviter).await.unwrap();
 
-    {
+    let inserted = {
         let room = state.rooms.get_mut(MappingId::Matrix(room_id)).unwrap();
         // invite the tomsg user in the room, and store that
         room.ensure_tomsg_user_in_room(&db, &mut conn, &invited_user)
-            .await;
+            .await
+    };
+    if !inserted {
+        eprintln!("{} was already in {}", invited_user.as_matrix(), room_id);
     }
 
     true
