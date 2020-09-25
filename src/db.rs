@@ -220,7 +220,7 @@ impl Database {
         })?;
 
         self.conn.execute(
-            "INSERT INTO room_participants(room_id, matrix_id, name) VALUES(?1, ?2)",
+            "INSERT INTO room_participants(room_id, matrix_id, name) VALUES(?1, ?2, ?3)",
             params![
                 room_id,
                 user.as_matrix().as_str(),
