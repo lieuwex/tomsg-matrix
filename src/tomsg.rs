@@ -653,22 +653,21 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
         }
 
         PushMessage::Invite { roomname, inviter } => {
-            println!("a {} {}", roomname, inviter);
             let mut state = get_state().lock().await;
-            println!("b {} {}", roomname, inviter);
-
-            let db = state.db.clone();
+            //let db = state.db.clone();
 
             let inviter = state.users.get(MappingId::External(&inviter)).cloned();
 
             let room = get_or_make_plumbed_room!(&mut state, roomname.clone());
-            room.insert_and_invite(&db, &get_matrix_client(), conn, &user)
-                .await;
+            //room.insert_and_invite(&db, &get_matrix_client(), conn, &user)
+            //    .await;
 
-            let inviter = inviter.and_then(|inviter| room.to_room_user(inviter).ok());
-            let inviter = match inviter {
-                Some(u) => u.into(),
-                None => (*get_appservice_sendable_user()).to_owned(),
+            let inviter = {
+                let inviter = inviter.and_then(|inviter| room.to_room_user(inviter).ok());
+                match inviter {
+                    Some(u) => u.into(),
+                    None => (*get_appservice_sendable_user()).to_owned(),
+                }
             };
 
             let tomsg_name = room.as_external().to_owned();
@@ -679,7 +678,6 @@ async fn handle_push(user: &ManagedUser, conn: &mut Channel, message: PushMessag
                 .await;
 
             let invited = user.as_matrix();
-
             get_matrix_client()
                 .invite_matrix_user(&matrix_id, &inviter, invited)
                 .await;
